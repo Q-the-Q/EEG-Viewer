@@ -303,29 +303,39 @@ struct SignalProcessor {
     // MARK: - Global Field Power
 
     /// Compute GFP (std across channels) at each time point.
+    /// Vectorized: computes mean across channels, then sum of squared deviations, per sample.
     static func globalFieldPower(_ data: [[Float]]) -> [Float] {
         let nChannels = data.count
         guard nChannels > 1 else { return data.first ?? [] }
         let nSamples = data[0].count
+        let n = vDSP_Length(nSamples)
+        let fChannels = Float(nChannels)
 
-        var gfp = [Float](repeating: 0, count: nSamples)
-
-        for s in 0..<nSamples {
-            var vals = [Float](repeating: 0, count: nChannels)
-            for ch in 0..<nChannels {
-                vals[ch] = data[ch][s]
-            }
-            var mean: Float = 0
-            vDSP_meanv(vals, 1, &mean, vDSP_Length(nChannels))
-
-            var variance: Float = 0
-            for ch in 0..<nChannels {
-                let diff = vals[ch] - mean
-                variance += diff * diff
-            }
-            variance /= Float(nChannels)
-            gfp[s] = sqrtf(variance)
+        // Step 1: Compute mean across channels at each time point (vectorized)
+        var mean = [Float](repeating: 0, count: nSamples)
+        for ch in 0..<nChannels {
+            vDSP_vadd(mean, 1, data[ch], 1, &mean, 1, n)
         }
+        var divisor = fChannels
+        vDSP_vsdiv(mean, 1, &divisor, &mean, 1, n)
+
+        // Step 2: Accumulate squared deviations from mean (vectorized)
+        var sumSqDev = [Float](repeating: 0, count: nSamples)
+        var temp = [Float](repeating: 0, count: nSamples)
+        for ch in 0..<nChannels {
+            // temp = data[ch] - mean
+            vDSP_vsub(mean, 1, data[ch], 1, &temp, 1, n)
+            // temp = temp * temp
+            vDSP_vmul(temp, 1, temp, 1, &temp, 1, n)
+            // sumSqDev += temp
+            vDSP_vadd(sumSqDev, 1, temp, 1, &sumSqDev, 1, n)
+        }
+
+        // Step 3: variance = sumSqDev / nChannels, gfp = sqrt(variance)
+        var gfp = [Float](repeating: 0, count: nSamples)
+        vDSP_vsdiv(sumSqDev, 1, &divisor, &gfp, 1, n)
+        var count = Int32(nSamples)
+        vvsqrtf(&gfp, gfp, &count)
 
         return gfp
     }
@@ -558,30 +568,47 @@ struct SignalProcessor {
     private static func applyBiquadCascade(_ signal: [Float], sections: [[Double]]) -> [Float] {
         var result = signal
         for section in sections {
-            result = applyBiquad(result, coeffs: section)
+            result = applyBiquadVDSP(result, coeffs: section)
         }
         return result
     }
 
-    /// Apply a single biquad section: y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
-    private static func applyBiquad(_ signal: [Float], coeffs: [Double]) -> [Float] {
-        let b0 = Float(coeffs[0])
-        let b1 = Float(coeffs[1])
-        let b2 = Float(coeffs[2])
-        let a1 = Float(coeffs[3])
-        let a2 = Float(coeffs[4])
+    /// Apply a single biquad section using vDSP_deq22 (hardware-optimized).
+    /// vDSP_deq22 coefficients: [b0, b1, b2, a1, a2] where:
+    ///   A[n] = b0*X[n] + b1*X[n-1] + b2*X[n-2] - a1*A[n-1] - a2*A[n-2]
+    private static func applyBiquadVDSP(_ signal: [Float], coeffs: [Double]) -> [Float] {
+        let n = signal.count
+        guard n > 2 else { return signal }
 
-        var output = [Float](repeating: 0, count: signal.count)
-        var x1: Float = 0, x2: Float = 0
-        var y1: Float = 0, y2: Float = 0
+        // vDSP_deq22 expects 5 coefficients: [b0, b1, b2, a1, a2]
+        var c: [Float] = coeffs.map { Float($0) }
 
-        for i in 0..<signal.count {
-            let x0 = signal[i]
-            let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-            output[i] = y0
-            x2 = x1; x1 = x0
-            y2 = y1; y1 = y0
+        // Prepend two zeros to input (vDSP_deq22 needs x[n-1], x[n-2] before first sample)
+        var input = [Float](repeating: 0, count: n + 2)
+        input.replaceSubrange(2..<n+2, with: signal)
+
+        var output = [Float](repeating: 0, count: n + 2)
+
+        vDSP_deq22(&input, 1, &c, &output, 1, vDSP_Length(n))
+
+        return Array(output[2..<n+2])
+    }
+
+    // MARK: - Decimation
+
+    /// Decimate a signal by factor (anti-alias LP filter + downsample).
+    /// Useful for reducing computation before band-limited analysis.
+    static func decimate(_ signal: [Float], factor: Int, sfreq: Float) -> [Float] {
+        guard factor > 1 else { return signal }
+        // Anti-alias: low-pass at new Nyquist (sfreq/factor/2)
+        let cutoff = sfreq / Float(factor) / 2.0 * 0.9  // 90% of new Nyquist
+        let filtered = lowpassFilter(signal, sfreq: sfreq, cutoff: cutoff)
+        // Downsample by taking every Nth sample
+        let n = filtered.count / factor
+        var result = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            result[i] = filtered[i * factor]
         }
-        return output
+        return result
     }
 }

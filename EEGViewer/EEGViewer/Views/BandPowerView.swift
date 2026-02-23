@@ -119,32 +119,53 @@ struct BandPowerView: View {
         let eegData = edfData.eegData
         let sfreq = edfData.sfreq
 
-        // Preprocess
-        let referenced = SignalProcessor.averageReference(eegData)
-        let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+        // Run all heavy DSP on a background thread
+        let (traces, specResult) = await Task.detached(priority: .userInitiated) {
+            // Preprocess at full sample rate
+            let referenced = SignalProcessor.averageReference(eegData)
+            let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
-        // Compute band GFP traces
-        var traces = [(name: String, color: Color, data: [Float])]()
+            // Decimate to 50 Hz for band analysis (we only need 1-25 Hz)
+            // This reduces 300K samples → 30K samples = 10x faster filtering
+            let decimFactor = max(1, Int(sfreq / 50.0))
+            let decimSfreq = sfreq / Float(decimFactor)
+            let decimated = filtered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
 
-        for band in Constants.freqBands {
-            let bandFiltered = filtered.map {
-                SignalProcessor.bandpassFilter($0, sfreq: sfreq, lowCut: band.low, highCut: band.high)
+            // Compute band GFP traces on decimated data
+            var bandNames = [String]()
+            var bandData = [[Float]]()
+
+            for band in Constants.freqBands {
+                let bandFiltered = decimated.map {
+                    SignalProcessor.bandpassFilter($0, sfreq: decimSfreq, lowCut: band.low, highCut: band.high)
+                }
+                let gfp = SignalProcessor.globalFieldPower(bandFiltered)
+                // Convert to µV
+                let gfpUV = gfp.map { $0 * 1e6 }
+                bandNames.append(band.name)
+                bandData.append(gfpUV)
             }
-            let gfp = SignalProcessor.globalFieldPower(bandFiltered)
-            // Convert to µV
-            let gfpUV = gfp.map { $0 * 1e6 }
-            traces.append((name: band.name, color: band.color, data: gfpUV))
+
+            // Spectrogram on decimated GFP (also only needs low freqs)
+            let gfpSignal = SignalProcessor.globalFieldPower(decimated)
+            let spec = SignalProcessor.spectrogram(gfpSignal, sfreq: decimSfreq,
+                                                    nperseg: min(Constants.spectrogramNperseg, gfpSignal.count / 4),
+                                                    noverlap: min(Constants.spectrogramNoverlap, gfpSignal.count / 8))
+
+            return (zip(bandNames, bandData).map { ($0, $1) }, spec)
+        }.value
+
+        // Map back to full trace tuples with colors on main thread
+        var fullTraces = [(name: String, color: Color, data: [Float])]()
+        for (i, band) in Constants.freqBands.enumerated() {
+            if i < traces.count {
+                fullTraces.append((name: traces[i].0, color: band.color, data: traces[i].1))
+            }
         }
 
-        // Compute spectrogram on GFP signal
-        let gfpSignal = SignalProcessor.globalFieldPower(filtered)
-        let specResult = SignalProcessor.spectrogram(gfpSignal, sfreq: sfreq)
-
-        await MainActor.run {
-            self.bandTraces = traces
-            self.spectrogramData = specResult
-            self.isProcessing = false
-        }
+        self.bandTraces = fullTraces
+        self.spectrogramData = specResult
+        self.isProcessing = false
     }
 
     // MARK: - Drawing Band Traces

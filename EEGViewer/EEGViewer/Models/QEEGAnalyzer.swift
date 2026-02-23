@@ -91,29 +91,38 @@ class QEEGAnalyzer: ObservableObject {
             zscores[band.name] = SignalProcessor.zscoresWithin(rp)
         }
 
-        // Step 5: Coherence (most expensive — O(n²) channel pairs)
+        // Step 5: Coherence — compute once per pair, extract all bands at once
         await updateProgress(0.35, "Computing coherence...")
-        var coherenceMatrices = [String: [[Float]]]()
+        let coherenceMatrices = await Task.detached(priority: .userInitiated) {
+            // Use smaller nperseg (512) for faster coherence — less freq resolution but much faster
+            let cohNperseg = 512
+            let cohNoverlap = 256
 
-        for (bandIdx, band) in Constants.freqBands.enumerated() {
-            let bandMatrix = await Task.detached {
-                var mat = [[Float]](repeating: [Float](repeating: 0, count: nChannels), count: nChannels)
-                for i in 0..<nChannels {
-                    mat[i][i] = 1.0
-                    for j in (i + 1)..<nChannels {
-                        let (cohFreqs, coh) = SignalProcessor.coherence(cleanData[i], cleanData[j], sfreq: sfreq)
+            // Initialize matrices for all bands
+            var matrices = [String: [[Float]]]()
+            for band in Constants.freqBands {
+                matrices[band.name] = [[Float]](repeating: [Float](repeating: 0, count: nChannels), count: nChannels)
+                // Diagonal = 1.0
+                for i in 0..<nChannels { matrices[band.name]![i][i] = 1.0 }
+            }
+
+            // Compute coherence once per pair, extract all 4 bands
+            for i in 0..<nChannels {
+                for j in (i + 1)..<nChannels {
+                    let (cohFreqs, coh) = SignalProcessor.coherence(
+                        cleanData[i], cleanData[j], sfreq: sfreq,
+                        nperseg: cohNperseg, noverlap: cohNoverlap
+                    )
+                    // Extract band coherence for all 4 bands from this single computation
+                    for band in Constants.freqBands {
                         let bandCoh = SignalProcessor.bandCoherence(coh, freqs: cohFreqs, low: band.low, high: band.high)
-                        mat[i][j] = bandCoh
-                        mat[j][i] = bandCoh
+                        matrices[band.name]![i][j] = bandCoh
+                        matrices[band.name]![j][i] = bandCoh
                     }
                 }
-                return mat
-            }.value
-
-            coherenceMatrices[band.name] = bandMatrix
-            let cohProgress = 0.35 + Float(bandIdx + 1) / Float(Constants.freqBands.count) * 0.45
-            await updateProgress(cohProgress, "Coherence: \(band.name) complete")
-        }
+            }
+            return matrices
+        }.value
 
         // Step 6: Asymmetry
         await updateProgress(0.85, "Computing asymmetry...")
