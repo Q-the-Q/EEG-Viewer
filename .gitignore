@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+
+# EDF data files (large binary, patient data)
+*.edf
+
+# PDF reports (patient data)
+*.pdf
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# RTF planning docs
+*.rtf
