@@ -27,26 +27,21 @@ struct ContentView: View {
                         QEEGDashboard(edfData: data, analyzer: analyzer)
                             .tabItem { Label("qEEG Analysis", systemImage: "brain.head.profile") }
                             .tag(2)
+
+                        BrainView3D(edfData: data)
+                            .tabItem { Label("3D Brain", systemImage: "brain") }
+                            .tag(3)
                     }
                 } else {
                     welcomeView
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Text("EEG Viewer")
-                        .font(.headline)
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showFilePicker = true
                     } label: {
                         Label("Open EDF", systemImage: "doc.badge.plus")
-                    }
-                }
-                if let data = edfData {
-                    ToolbarItem(placement: .bottomBar) {
-                        statusBar(data: data)
                     }
                 }
             }
@@ -89,24 +84,6 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
         }
-    }
-
-    private func statusBar(data: EDFData) -> some View {
-        let eegCount = data.eegIndices.count
-        let hasECG = data.channelNames.contains(where: { $0.uppercased() == "ECG" || $0.uppercased() == "EKG" })
-        let durMin = Int(data.duration) / 60
-        let durSec = Int(data.duration) % 60
-
-        return HStack(spacing: 16) {
-            Text("\(eegCount) EEG channels")
-            if hasECG { Text("+ ECG") }
-            Divider().frame(height: 16)
-            Text("\(Int(data.sfreq)) Hz")
-            Divider().frame(height: 16)
-            Text(String(format: "%02d:%02d duration", durMin, durSec))
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
 
     private func loadFile(url: URL) {

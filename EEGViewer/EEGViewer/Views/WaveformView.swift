@@ -8,7 +8,6 @@ import Combine
 struct WaveformView: View {
     let edfData: EDFData
 
-    @State private var mode: ViewMode = .static_
     @State private var isPlaying = false
     @State private var currentTime: Float = 0
     @State private var speed: Float = 1.0
@@ -17,11 +16,7 @@ struct WaveformView: View {
     @State private var selectedChannels: Set<Int> = []
     @State private var showChannelSelector = false
     @State private var timer: AnyCancellable?
-
-    enum ViewMode {
-        case static_
-        case playback
-    }
+    @GestureState private var dragStartTime: Float?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,10 +27,15 @@ struct WaveformView: View {
                 }
                 .gesture(
                     DragGesture()
+                        .updating($dragStartTime) { _, state, _ in
+                            if state == nil { state = currentTime }
+                        }
                         .onChanged { value in
-                            if mode == .static_ {
+                            if let startTime = dragStartTime {
+                                // Pause playback if dragging while playing
+                                if isPlaying { stopPlayback() }
                                 let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
-                                currentTime = max(0, min(edfData.duration - windowSec, currentTime - dt))
+                                currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
                             }
                         }
                 )
@@ -62,17 +62,6 @@ struct WaveformView: View {
     private var controlsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
-                // Mode picker
-                Picker("Mode", selection: $mode) {
-                    Text("Static").tag(ViewMode.static_)
-                    Text("Playback").tag(ViewMode.playback)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
-                .onChange(of: mode) { newMode in
-                    if newMode == .static_ { stopPlayback() }
-                }
-
                 // Play/Pause
                 Button {
                     togglePlayback()
@@ -80,7 +69,6 @@ struct WaveformView: View {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .frame(width: 32)
                 }
-                .disabled(mode == .static_)
 
                 // Speed
                 VStack(spacing: 2) {
@@ -89,7 +77,6 @@ struct WaveformView: View {
                     Slider(value: $speed, in: 0.5...4.0, step: 0.5)
                         .frame(width: 80)
                 }
-                .disabled(mode == .static_)
 
                 // Time scrubber
                 VStack(spacing: 2) {
@@ -167,6 +154,9 @@ struct WaveformView: View {
     // MARK: - Drawing
 
     private func drawWaveforms(context: GraphicsContext, size: CGSize) {
+        // White background
+        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+
         let channels = selectedChannels.sorted()
         guard !channels.isEmpty else { return }
 
@@ -202,7 +192,7 @@ struct WaveformView: View {
             gridPath.addLine(to: CGPoint(x: x, y: size.height))
             gridSec += 1
         }
-        context.stroke(gridPath, with: .color(.gray.opacity(0.15)), lineWidth: 0.5)
+        context.stroke(gridPath, with: .color(.gray.opacity(0.25)), lineWidth: 0.5)
 
         // Draw each channel
         for (row, chIdx) in channels.enumerated() {
@@ -210,7 +200,7 @@ struct WaveformView: View {
 
             // Channel label
             context.draw(
-                Text(edfData.channelNames[chIdx]).font(.system(size: 10)),
+                Text(edfData.channelNames[chIdx]).font(.system(size: 10, weight: .medium)).foregroundColor(.black),
                 at: CGPoint(x: 30, y: centerY),
                 anchor: .leading
             )
@@ -219,7 +209,7 @@ struct WaveformView: View {
             var zeroPath = Path()
             zeroPath.move(to: CGPoint(x: 0, y: centerY))
             zeroPath.addLine(to: CGPoint(x: size.width, y: centerY))
-            context.stroke(zeroPath, with: .color(.gray.opacity(0.1)), lineWidth: 0.5)
+            context.stroke(zeroPath, with: .color(.gray.opacity(0.2)), lineWidth: 0.5)
 
             // Waveform
             let data = edfData.data[chIdx]

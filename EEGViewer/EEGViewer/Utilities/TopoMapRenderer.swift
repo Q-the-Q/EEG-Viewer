@@ -108,7 +108,7 @@ struct TopoMapRenderer {
         // Draw electrode dots
         for elec in electrodes {
             let px = CGFloat(elec.x * scale + centerX)
-            let py = CGFloat(-elec.y * scale + centerY)
+            let py = CGFloat(elec.y * scale + centerY)
             context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8))
             context.fillEllipse(in: CGRect(x: px - 2, y: py - 2, width: 4, height: 4))
         }
@@ -127,28 +127,28 @@ struct TopoMapRenderer {
             width: radius * 2, height: radius * 2
         ))
 
-        // Nose (triangle at top)
+        // Nose (triangle at top — high Y in CGContext = top of displayed image)
         let noseWidth: CGFloat = radius * 0.15
         let noseHeight: CGFloat = radius * 0.12
-        let noseBase = centerY - radius
+        let noseBase = centerY + radius
         context.beginPath()
         context.move(to: CGPoint(x: centerX - noseWidth, y: noseBase))
-        context.addLine(to: CGPoint(x: centerX, y: noseBase - noseHeight))
+        context.addLine(to: CGPoint(x: centerX, y: noseBase + noseHeight))
         context.addLine(to: CGPoint(x: centerX + noseWidth, y: noseBase))
         context.strokePath()
 
-        // Left ear
+        // Left ear (CGContext: left side of head)
         let earWidth: CGFloat = 6
         let earHeight: CGFloat = radius * 0.3
         context.beginPath()
         context.addArc(center: CGPoint(x: centerX - radius - earWidth / 2, y: centerY),
-                       radius: earHeight / 2, startAngle: -.pi / 2, endAngle: .pi / 2, clockwise: true)
+                       radius: earHeight / 2, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
         context.strokePath()
 
         // Right ear
         context.beginPath()
         context.addArc(center: CGPoint(x: centerX + radius + earWidth / 2, y: centerY),
-                       radius: earHeight / 2, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
+                       radius: earHeight / 2, startAngle: -.pi / 2, endAngle: .pi / 2, clockwise: true)
         context.strokePath()
     }
 }

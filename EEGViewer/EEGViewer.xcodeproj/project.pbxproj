@@ -24,6 +24,9 @@
 		A10000015 /* ColorMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000015; };
 		A10000016 /* TopoMapRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000016; };
 		A10000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000017; };
+		A10000018 /* BrainView3D.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000018; };
+		A10000019 /* lh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000019; };
+		A10000020 /* rh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000020; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +47,9 @@
 		A20000015 /* ColorMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorMap.swift; sourceTree = "<group>"; };
 		A20000016 /* TopoMapRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopoMapRenderer.swift; sourceTree = "<group>"; };
 		A20000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000018 /* BrainView3D.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainView3D.swift; sourceTree = "<group>"; };
+		A20000019 /* lh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = lh.pial.obj; sourceTree = "<group>"; };
+		A20000020 /* rh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = rh.pial.obj; sourceTree = "<group>"; };
 		A30000001 /* EEGViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EEGViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -101,6 +107,7 @@
 				A20000012 /* TopoMapView.swift */,
 				A20000013 /* CoherenceHeatmapView.swift */,
 				A20000014 /* AsymmetryChartView.swift */,
+				A20000018 /* BrainView3D.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -126,6 +133,8 @@
 			isa = PBXGroup;
 			children = (
 				A20000017 /* Assets.xcassets */,
+				A20000019 /* lh.pial.obj */,
+				A20000020 /* rh.pial.obj */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -189,6 +198,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000017 /* Assets.xcassets in Resources */,
+				A10000019 /* lh.pial.obj in Resources */,
+				A10000020 /* rh.pial.obj in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,6 +226,7 @@
 				A10000014 /* AsymmetryChartView.swift in Sources */,
 				A10000015 /* ColorMap.swift in Sources */,
 				A10000016 /* TopoMapRenderer.swift in Sources */,
+				A10000018 /* BrainView3D.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

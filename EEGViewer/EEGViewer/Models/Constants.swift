@@ -17,7 +17,7 @@ enum Constants {
 
     static let freqBands: [FreqBand] = [
         FreqBand(name: "Delta", low: 1.0, high: 4.0,
-                 color: Color(red: 0.416, green: 0.051, blue: 0.678),  // #6A0DAD
+                 color: Color(red: 0.0, green: 0.85, blue: 0.85),  // Cyan — high visibility on dark bg
                  shadeColor: Color(red: 0.839, green: 0.918, blue: 0.973)),  // #D6EAF8
         FreqBand(name: "Theta", low: 4.0, high: 8.0,
                  color: Color(red: 0.133, green: 0.545, blue: 0.133),  // #228B22

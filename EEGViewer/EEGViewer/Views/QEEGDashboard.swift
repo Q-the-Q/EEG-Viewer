@@ -105,10 +105,19 @@ struct QEEGDashboard: View {
     // MARK: - Spectra Row
 
     private func spectraRow(results: QEEGResults) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ForEach(["Frontal", "Central", "Posterior"], id: \.self) { region in
+        // Compute shared Y-axis max across all 3 regions: peak + 0.2 µV
+        let regions = ["Frontal", "Central", "Posterior"]
+        let globalPeak = regions.map { region -> Float in
+            let chs = Constants.regionMap[region] ?? []
+            return SpectraChartView.peakAmplitude(results: results, channels: chs)
+        }.max() ?? 1.0
+        let sharedMax = globalPeak + 0.2
+
+        return HStack(alignment: .top, spacing: 12) {
+            ForEach(regions, id: \.self) { region in
                 let channelNames = Constants.regionMap[region] ?? []
-                SpectraChartView(results: results, region: region, channels: channelNames)
+                SpectraChartView(results: results, region: region,
+                                 channels: channelNames, sharedMaxY: sharedMax)
                     .frame(minHeight: 200)
             }
         }

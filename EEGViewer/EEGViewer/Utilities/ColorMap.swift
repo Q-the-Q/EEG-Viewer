@@ -96,6 +96,31 @@ struct ColorMap {
         return Color(red: r, green: g, blue: b)
     }
 
+    /// Jet colormap: dark blue → blue → cyan → green → yellow → red → dark red.
+    /// Matches the standard MATLAB/matplotlib jet colormap used in clinical EEG software.
+    static func jetRGB(at position: Float) -> (r: Float, g: Float, b: Float) {
+        let t = max(0, min(1, position))
+        let r: Float; let g: Float; let b: Float
+
+        if t < 0.125 {
+            let f = t / 0.125
+            r = 0; g = 0; b = 0.5 + 0.5 * f
+        } else if t < 0.375 {
+            let f = (t - 0.125) / 0.25
+            r = 0; g = f; b = 1.0
+        } else if t < 0.625 {
+            let f = (t - 0.375) / 0.25
+            r = f; g = 1.0; b = 1.0 - f
+        } else if t < 0.875 {
+            let f = (t - 0.625) / 0.25
+            r = 1.0; g = 1.0 - f; b = 0
+        } else {
+            let f = (t - 0.875) / 0.125
+            r = 1.0 - 0.5 * f; g = 0; b = 0
+        }
+        return (r, g, b)
+    }
+
     static func viridisRGB(at position: Float) -> (r: Float, g: Float, b: Float) {
         let t = max(0, min(1, position))
         let r: Float; let g: Float; let b: Float
