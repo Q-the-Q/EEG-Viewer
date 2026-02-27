@@ -8,7 +8,6 @@ import Combine
 struct WaveformView: View {
     let edfData: EDFData
 
-    @State private var mode: ViewMode = .static_
     @State private var isPlaying = false
     @State private var currentTime: Float = 0
     @State private var speed: Float = 1.0
@@ -17,11 +16,7 @@ struct WaveformView: View {
     @State private var selectedChannels: Set<Int> = []
     @State private var showChannelSelector = false
     @State private var timer: AnyCancellable?
-
-    enum ViewMode {
-        case static_
-        case playback
-    }
+    @GestureState private var dragStartTime: Float?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,10 +27,15 @@ struct WaveformView: View {
                 }
                 .gesture(
                     DragGesture()
+                        .updating($dragStartTime) { _, state, _ in
+                            if state == nil { state = currentTime }
+                        }
                         .onChanged { value in
-                            if mode == .static_ {
+                            if let startTime = dragStartTime {
+                                // Pause playback if dragging while playing
+                                if isPlaying { stopPlayback() }
                                 let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
-                                currentTime = max(0, min(edfData.duration - windowSec, currentTime - dt))
+                                currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
                             }
                         }
                 )
@@ -62,17 +62,6 @@ struct WaveformView: View {
     private var controlsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
-                // Mode picker
-                Picker("Mode", selection: $mode) {
-                    Text("Static").tag(ViewMode.static_)
-                    Text("Playback").tag(ViewMode.playback)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
-                .onChange(of: mode) { newMode in
-                    if newMode == .static_ { stopPlayback() }
-                }
-
                 // Play/Pause
                 Button {
                     togglePlayback()
@@ -80,7 +69,6 @@ struct WaveformView: View {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .frame(width: 32)
                 }
-                .disabled(mode == .static_)
 
                 // Speed
                 VStack(spacing: 2) {
@@ -89,7 +77,6 @@ struct WaveformView: View {
                     Slider(value: $speed, in: 0.5...4.0, step: 0.5)
                         .frame(width: 80)
                 }
-                .disabled(mode == .static_)
 
                 // Time scrubber
                 VStack(spacing: 2) {

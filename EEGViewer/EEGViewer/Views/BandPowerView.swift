@@ -19,6 +19,7 @@ struct BandPowerView: View {
     @State private var isPlaying = false
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
+    @GestureState private var dragStartTime: Float?
 
     private let spectrogramMaxFreq: Float = 50.0
 
@@ -30,22 +31,38 @@ struct BandPowerView: View {
                     .background(Color.black)
                     .foregroundColor(.white)
             } else {
-                // Top: Band GFP traces (compact)
-                Canvas { context, size in
-                    drawBandTraces(context: context, size: size)
-                }
-                .frame(height: 200)
+                GeometryReader { geo in
+                    VStack(spacing: 0) {
+                        // Top: Band GFP traces
+                        Canvas { context, size in
+                            drawBandTraces(context: context, size: size)
+                        }
+                        .frame(height: 200)
 
-                // Subtle separator
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(height: 1)
+                        // Subtle separator
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(height: 1)
 
-                // Main: Spectrogram (fills remaining space)
-                Canvas { context, size in
-                    drawSpectrogram(context: context, size: size)
+                        // Main: Spectrogram (fills remaining space)
+                        Canvas { context, size in
+                            drawSpectrogram(context: context, size: size)
+                        }
+                        .frame(maxHeight: .infinity)
+                    }
+                    .gesture(
+                        DragGesture()
+                            .updating($dragStartTime) { _, state, _ in
+                                if state == nil { state = currentTime }
+                            }
+                            .onChanged { value in
+                                if let startTime = dragStartTime {
+                                    let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
+                                    currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
+                                }
+                            }
+                    )
                 }
-                .frame(maxHeight: .infinity)
 
                 // Controls
                 controlsBar
@@ -284,6 +301,10 @@ struct BandPowerView: View {
         guard let lastFreqIdx = freqIndices.last?.offset else { return }
         let actualMaxFreq = spec.frequencies[lastFreqIdx]
 
+        // Use the actual frequency ceiling for all axis calculations so
+        // labels, band boundaries, and the image stay aligned
+        let displayMaxFreq = actualMaxFreq
+
         // Find time column indices for the current window
         var startCol = 0
         var endCol = spec.times.count - 1
@@ -297,18 +318,17 @@ struct BandPowerView: View {
         // Crop the pre-rendered CGImage to current time window
         if let cropped = image.cropping(to: CGRect(x: startCol, y: 0,
                                                     width: cropWidth, height: image.height)) {
-            let yTop = plotHeight * (1.0 - CGFloat(actualMaxFreq / maxFreq))
             context.draw(
                 Image(decorative: cropped, scale: 1.0),
-                in: CGRect(x: leftMargin, y: yTop, width: plotWidth, height: plotHeight - yTop)
+                in: CGRect(x: leftMargin, y: 0, width: plotWidth, height: plotHeight)
             )
         }
 
         // Band boundary overlay lines (dashed white)
         let bandBoundaries: [Float] = [4, 8, 13, 25]
         for freq in bandBoundaries {
-            if freq > maxFreq { continue }
-            let y = plotHeight * (1.0 - CGFloat(freq / maxFreq))
+            if freq > displayMaxFreq { continue }
+            let y = plotHeight * (1.0 - CGFloat(freq / displayMaxFreq))
             var linePath = Path()
             linePath.move(to: CGPoint(x: leftMargin, y: y))
             linePath.addLine(to: CGPoint(x: size.width, y: y))
@@ -319,8 +339,8 @@ struct BandPowerView: View {
         // Frequency axis labels (left side)
         let freqLabels: [Float] = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
         for freq in freqLabels {
-            if freq > maxFreq { continue }
-            let y = plotHeight * (1.0 - CGFloat(freq / maxFreq))
+            if freq > displayMaxFreq { continue }
+            let y = plotHeight * (1.0 - CGFloat(freq / displayMaxFreq))
             context.draw(
                 Text("\(Int(freq))").font(.system(size: 8)).foregroundColor(.gray),
                 at: CGPoint(x: leftMargin - 4, y: y),
