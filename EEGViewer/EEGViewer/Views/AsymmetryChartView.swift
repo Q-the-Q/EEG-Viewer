@@ -1,27 +1,20 @@
 // AsymmetryChartView.swift
 // Hemispheric asymmetry bar chart: ln(Right) - ln(Left) for 8 homologous pairs.
+// Band selection is controlled externally (from QEEGDashboard) so all recordings share the same band.
 
 import SwiftUI
 import Charts
 
 struct AsymmetryChartView: View {
     let results: QEEGResults
-    @State private var selectedBand: String = "Alpha"
+    /// Which frequency band to display. Controlled by the parent view.
+    var selectedBand: String = "Alpha"
 
     var body: some View {
         VStack(spacing: 8) {
-            HStack {
-                Text("Hemispheric Asymmetry")
-                    .font(.caption.bold())
-                Spacer()
-                Picker("Band", selection: $selectedBand) {
-                    ForEach(Constants.freqBands, id: \.name) { band in
-                        Text(band.name).tag(band.name)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
-            }
+            Text("Hemispheric Asymmetry")
+                .font(.caption.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let pairs = results.asymmetry[selectedBand] {
                 Chart(pairs, id: \.pair) { item in
