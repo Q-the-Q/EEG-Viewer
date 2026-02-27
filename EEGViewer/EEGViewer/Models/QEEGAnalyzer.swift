@@ -18,6 +18,7 @@ struct QEEGResults {
     let cleanData: [[Float]]
     let channels: [String]
     let sfreq: Float
+    let sourceFilename: String
 }
 
 @MainActor
@@ -27,7 +28,7 @@ class QEEGAnalyzer: ObservableObject {
     @Published var results: QEEGResults?
     @Published var isAnalyzing = false
 
-    func analyze(edfData: EDFData) async {
+    func analyze(edfData: EDFData, filename: String = "") async {
         isAnalyzing = true
         progress = 0
         statusMessage = "Starting analysis..."
@@ -189,7 +190,8 @@ class QEEGAnalyzer: ObservableObject {
             artifactStats: artifactStats,
             cleanData: cleanData,
             channels: channels,
-            sfreq: sfreq
+            sfreq: sfreq,
+            sourceFilename: filename
         )
 
         isAnalyzing = false

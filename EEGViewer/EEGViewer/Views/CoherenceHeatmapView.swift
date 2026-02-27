@@ -1,26 +1,19 @@
 // CoherenceHeatmapView.swift
 // Coherence heatmap matrix rendered via Canvas. Shows inter-channel coherence 0–1.
+// Band selection is controlled externally (from QEEGDashboard) so all recordings share the same band.
 
 import SwiftUI
 
 struct CoherenceHeatmapView: View {
     let results: QEEGResults
-    @State private var selectedBand: String = "Alpha"
+    /// Which frequency band to display. Controlled by the parent view.
+    var selectedBand: String = "Alpha"
 
     var body: some View {
         VStack(spacing: 8) {
-            HStack {
-                Text("Coherence Matrix")
-                    .font(.caption.bold())
-                Spacer()
-                Picker("Band", selection: $selectedBand) {
-                    ForEach(Constants.freqBands, id: \.name) { band in
-                        Text(band.name).tag(band.name)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
-            }
+            Text("Coherence Matrix")
+                .font(.caption.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             GeometryReader { geo in
                 Canvas { context, size in

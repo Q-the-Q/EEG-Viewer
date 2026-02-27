@@ -27,6 +27,7 @@
 		A10000018 /* BrainView3D.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000018; };
 		A10000019 /* lh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000019; };
 		A10000020 /* rh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000020; };
+		A10000021 /* PDFExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000021; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		A20000018 /* BrainView3D.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainView3D.swift; sourceTree = "<group>"; };
 		A20000019 /* lh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = lh.pial.obj; sourceTree = "<group>"; };
 		A20000020 /* rh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = rh.pial.obj; sourceTree = "<group>"; };
+		A20000021 /* PDFExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFExporter.swift; sourceTree = "<group>"; };
 		A30000001 /* EEGViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EEGViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -117,6 +119,7 @@
 			children = (
 				A20000015 /* ColorMap.swift */,
 				A20000016 /* TopoMapRenderer.swift */,
+				A20000021 /* PDFExporter.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -227,6 +230,7 @@
 				A10000015 /* ColorMap.swift in Sources */,
 				A10000016 /* TopoMapRenderer.swift in Sources */,
 				A10000018 /* BrainView3D.swift in Sources */,
+				A10000021 /* PDFExporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

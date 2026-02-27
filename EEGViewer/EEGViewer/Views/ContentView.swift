@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var edfData: EDFData?
+    @State private var loadedFilename: String = ""
     @State private var showFilePicker = false
     @State private var selectedTab = 0
     @State private var errorMessage: String?
@@ -24,7 +25,7 @@ struct ContentView: View {
                             .tabItem { Label("Band Waveforms", systemImage: "chart.line.uptrend.xyaxis") }
                             .tag(1)
 
-                        QEEGDashboard(edfData: data, analyzer: analyzer)
+                        QEEGDashboard(edfData: data, analyzer: analyzer, primaryFilename: loadedFilename)
                             .tabItem { Label("qEEG Analysis", systemImage: "brain.head.profile") }
                             .tag(2)
 
@@ -90,6 +91,7 @@ struct ContentView: View {
         do {
             let data = try EDFReader.read(url: url)
             self.edfData = data
+            self.loadedFilename = url.lastPathComponent
             self.errorMessage = nil
         } catch {
             self.errorMessage = error.localizedDescription
