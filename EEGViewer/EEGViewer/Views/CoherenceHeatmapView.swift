@@ -26,7 +26,7 @@ struct CoherenceHeatmapView: View {
     private func drawHeatmap(context: GraphicsContext, size: CGSize) {
         guard let matrix = results.coherence[selectedBand] else { return }
         let n = results.channels.count
-        guard n > 0 else { return }
+        guard n > 0, matrix.count == n else { return }
 
         let labelWidth: CGFloat = 30
         let plotSize = min(size.width - labelWidth, size.height - labelWidth)

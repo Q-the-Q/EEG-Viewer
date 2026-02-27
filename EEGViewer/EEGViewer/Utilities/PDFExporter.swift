@@ -283,7 +283,6 @@ struct PDFExporter {
             .font: UIFont.systemFont(ofSize: 9),
             .foregroundColor: UIColor.gray
         ]
-        let text = "\(name) (\(range))"
         let nameSize = (name as NSString).size(withAttributes: nameAttrs)
         (name as NSString).draw(at: CGPoint(x: margin + 4, y: y), withAttributes: nameAttrs)
         (" (\(range))" as NSString).draw(at: CGPoint(x: margin + 4 + nameSize.width, y: y + 1), withAttributes: rangeAttrs)

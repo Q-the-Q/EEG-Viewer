@@ -15,34 +15,39 @@ class ComparisonManager: ObservableObject {
         let edfData: EDFData
         let filename: String
         let analyzer: QEEGAnalyzer
+        var analysisTask: Task<Void, Never>?
     }
 
     @Published var sessions: [Session] = []
-    private var cancellables = Set<AnyCancellable>()
+    /// Per-session Combine sinks keyed by session ID — cleaned up on removal.
+    private var sessionCancellables: [UUID: AnyCancellable] = [:]
 
     var canAddMore: Bool { sessions.count < 2 }
 
     func addSession(edfData: EDFData, filename: String) {
         let analyzer = QEEGAnalyzer()
-        let session = Session(edfData: edfData, filename: filename, analyzer: analyzer)
-        sessions.append(session)
+        var session = Session(edfData: edfData, filename: filename, analyzer: analyzer)
 
         // Forward analyzer state changes to trigger dashboard re-renders
-        analyzer.objectWillChange
+        sessionCancellables[session.id] = analyzer.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
 
-        Task { await analyzer.analyze(edfData: edfData, filename: filename) }
+        session.analysisTask = Task { await analyzer.analyze(edfData: edfData, filename: filename) }
+        sessions.append(session)
     }
 
-    func removeSession(at index: Int) {
-        guard index < sessions.count else { return }
+    /// Remove a session by its stable ID. Cancels in-flight analysis and cleans up sink.
+    func removeSession(id: UUID) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[index].analysisTask?.cancel()
+        sessionCancellables.removeValue(forKey: id)
         sessions.remove(at: index)
     }
 
     func removeAll() {
+        for session in sessions { session.analysisTask?.cancel() }
         sessions.removeAll()
-        cancellables.removeAll()
+        sessionCancellables.removeAll()
     }
 }
 
@@ -62,14 +67,15 @@ struct QEEGDashboard: View {
     @State private var isLoadingComparison = false
 
     /// All available results: primary + comparisons (only those that have completed analysis).
-    private var allResults: [(index: Int, filename: String, results: QEEGResults)] {
-        var list = [(index: Int, filename: String, results: QEEGResults)]()
+    /// Each entry includes a stable sessionID (nil for primary) for safe removal.
+    private var allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)] {
+        var list = [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)]()
         if let r = analyzer.results {
-            list.append((index: 1, filename: primaryFilename, results: r))
+            list.append((index: 1, filename: primaryFilename, results: r, sessionID: nil))
         }
         for (i, session) in comparisonManager.sessions.enumerated() {
             if let r = session.analyzer.results {
-                list.append((index: i + 2, filename: session.filename, results: r))
+                list.append((index: i + 2, filename: session.filename, results: r, sessionID: session.id))
             }
         }
         return list
@@ -127,7 +133,7 @@ struct QEEGDashboard: View {
                 sectionHeader("Magnitude Spectra")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
                     if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename)
+                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
                     }
                     artifactStatsBar(results: entry.results)
                     spectraRow(results: entry.results, sharedMaxY: sharedSpectraMaxY)
@@ -139,7 +145,7 @@ struct QEEGDashboard: View {
                 sectionHeader("Topographic Z-Score Maps")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
                     if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename)
+                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
                     }
                     topoRow(results: entry.results)
                 }
@@ -160,7 +166,7 @@ struct QEEGDashboard: View {
                 }
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
                     if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename)
+                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
                     }
                     HStack(alignment: .top, spacing: 16) {
                         CoherenceHeatmapView(results: entry.results,
@@ -179,7 +185,7 @@ struct QEEGDashboard: View {
                 sectionHeader("Peak Frequencies")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
                     if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename)
+                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
                     }
                     peakFrequencyTable(results: entry.results)
                 }
@@ -316,7 +322,7 @@ struct QEEGDashboard: View {
 
     // MARK: - Recording Label
 
-    private func recordingLabel(index: Int, filename: String) -> some View {
+    private func recordingLabel(index: Int, filename: String, sessionID: UUID?) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Recording \(index)")
@@ -327,10 +333,10 @@ struct QEEGDashboard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            // Show remove button for comparisons (index > 1)
-            if index > 1 {
+            // Show remove button for comparisons (sessionID != nil)
+            if let id = sessionID {
                 Button {
-                    comparisonManager.removeSession(at: index - 2)
+                    comparisonManager.removeSession(id: id)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -374,7 +380,7 @@ struct QEEGDashboard: View {
     }
 
     /// Compute shared spectra Y-axis max across ALL recordings.
-    private func computeSharedSpectraMaxY(allResults: [(index: Int, filename: String, results: QEEGResults)]) -> Float {
+    private func computeSharedSpectraMaxY(allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)]) -> Float {
         let regions = ["Frontal", "Central", "Posterior"]
         var globalPeak: Float = 0
         for entry in allResults {
@@ -452,13 +458,17 @@ struct QEEGDashboard: View {
 
     private func exportPDF() {
         isExporting = true
-        let results = allResults
+        // Strip sessionID — PDFExporter doesn't need it
+        let pdfResults = allResults.map { (index: $0.index, filename: $0.filename, results: $0.results) }
         let data = edfData
-        // Generate PDF (ImageRenderer must run on main actor)
-        let pdf = PDFExporter.generateReport(allResults: results, edfData: data)
-        self.pdfData = pdf
-        self.isExporting = false
-        self.showShareSheet = true
+        // Wrap in Task so the run loop yields and the spinner actually renders.
+        // ImageRenderer must run on main actor, but Task yields before starting work.
+        Task { @MainActor in
+            let pdf = PDFExporter.generateReport(allResults: pdfResults, edfData: data)
+            self.pdfData = pdf
+            self.isExporting = false
+            self.showShareSheet = true
+        }
     }
 }
 
