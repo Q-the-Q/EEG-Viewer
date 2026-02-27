@@ -147,33 +147,39 @@ struct PDFExporter {
             }
 
             // ── Coherence & Asymmetry (all 4 bands) ─────
+            // Grouped by band so comparisons are adjacent:
+            //   Delta: Recording 1, Recording 2
+            //   Theta: Recording 1, Recording 2
+            //   ...
             ensureSpace(200)
             yOffset = drawSectionTitle(pdfContext.cgContext, "Coherence & Asymmetry", y: yOffset)
 
-            for rec in recordings {
-                if multiRecording {
-                    ensureSpace(30)
-                    yOffset = drawRecordingLabel(pdfContext.cgContext, index: rec.index,
-                                                  filename: rec.filename, y: yOffset)
-                }
+            let bandCount = recordings.first?.coherenceImages.count ?? 0
+            for bandIdx in 0..<bandCount {
+                // Band label (from first recording — all share the same bands)
+                let bandInfo = recordings[0].coherenceImages[bandIdx]
+                ensureSpace(30)
+                yOffset = drawBandLabel(pdfContext.cgContext, name: bandInfo.bandName,
+                                        range: bandInfo.freqRange, y: yOffset)
 
-                // Iterate over each band
-                for bandIdx in 0..<rec.coherenceImages.count {
-                    let coh = rec.coherenceImages[bandIdx]
+                for rec in recordings {
                     ensureSpace(210)
-
-                    // Band label
-                    yOffset = drawBandLabel(pdfContext.cgContext, name: coh.bandName,
-                                            range: coh.freqRange, y: yOffset)
+                    if multiRecording {
+                        yOffset = drawRecordingLabel(pdfContext.cgContext, index: rec.index,
+                                                      filename: rec.filename, y: yOffset)
+                    }
 
                     // Coherence + Asymmetry side by side
-                    if bandIdx < rec.asymmetryImages.count {
-                        let asym = rec.asymmetryImages[bandIdx]
-                        yOffset = drawImagePair(pdfContext.cgContext, left: coh.image,
-                                                right: asym.image, maxHeight: 180, y: yOffset)
-                    } else {
-                        yOffset = drawImage(pdfContext.cgContext, image: coh.image,
-                                            maxWidth: contentWidth / 2, maxHeight: 180, y: yOffset)
+                    if bandIdx < rec.coherenceImages.count {
+                        let coh = rec.coherenceImages[bandIdx]
+                        if bandIdx < rec.asymmetryImages.count {
+                            let asym = rec.asymmetryImages[bandIdx]
+                            yOffset = drawImagePair(pdfContext.cgContext, left: coh.image,
+                                                    right: asym.image, maxHeight: 180, y: yOffset)
+                        } else {
+                            yOffset = drawImage(pdfContext.cgContext, image: coh.image,
+                                                maxWidth: contentWidth / 2, maxHeight: 180, y: yOffset)
+                        }
                     }
                     yOffset += 4
                 }

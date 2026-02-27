@@ -59,6 +59,7 @@ struct QEEGDashboard: View {
     @State private var pdfData: Data?
     @State private var isExporting = false
     @State private var selectedCoherenceBand: String = "Alpha"
+    @State private var isLoadingComparison = false
 
     /// All available results: primary + comparisons (only those that have completed analysis).
     private var allResults: [(index: Int, filename: String, results: QEEGResults)] {
@@ -211,25 +212,44 @@ struct QEEGDashboard: View {
     // MARK: - Comparison Progress
 
     private var comparisonProgressSection: some View {
-        ForEach(comparisonManager.sessions) { session in
-            if session.analyzer.isAnalyzing {
-                VStack(spacing: 8) {
-                    HStack {
-                        Text("Analyzing: \(session.filename)")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    ProgressView(value: Double(session.analyzer.progress))
-                        .progressViewStyle(.linear)
-                    Text(session.analyzer.statusMessage)
-                        .font(.caption2)
+        VStack(spacing: 8) {
+            // File loading indicator (before analysis starts)
+            if isLoadingComparison {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading comparison file…")
+                        .font(.caption.bold())
                         .foregroundStyle(.secondary)
+                    Spacer()
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(Color.blue.opacity(0.05))
                 .cornerRadius(8)
+            }
+
+            // Analysis progress indicators
+            ForEach(comparisonManager.sessions) { session in
+                if session.analyzer.isAnalyzing {
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Analyzing: \(session.filename)")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        ProgressView(value: Double(session.analyzer.progress))
+                            .progressViewStyle(.linear)
+                        Text(session.analyzer.statusMessage)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color.blue.opacity(0.05))
+                    .cornerRadius(8)
+                }
             }
         }
     }
@@ -283,7 +303,7 @@ struct QEEGDashboard: View {
                     .font(.subheadline)
             }
             .buttonStyle(.bordered)
-            .disabled(!comparisonManager.canAddMore)
+            .disabled(!comparisonManager.canAddMore || isLoadingComparison)
         }
     }
 
@@ -412,12 +432,19 @@ struct QEEGDashboard: View {
     // MARK: - Comparison File Loading
 
     private func loadComparisonFile(url: URL) {
-        do {
-            let data = try EDFReader.read(url: url)
-            let filename = url.lastPathComponent
-            comparisonManager.addSession(edfData: data, filename: filename)
-        } catch {
-            comparisonError = error.localizedDescription
+        isLoadingComparison = true
+        Task {
+            do {
+                // Read EDF on background thread to avoid blocking UI
+                let data = try await Task.detached(priority: .userInitiated) {
+                    try EDFReader.read(url: url)
+                }.value
+                let filename = url.lastPathComponent
+                comparisonManager.addSession(edfData: data, filename: filename)
+            } catch {
+                comparisonError = error.localizedDescription
+            }
+            isLoadingComparison = false
         }
     }
 
