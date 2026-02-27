@@ -167,6 +167,9 @@ struct WaveformView: View {
     // MARK: - Drawing
 
     private func drawWaveforms(context: GraphicsContext, size: CGSize) {
+        // White background
+        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+
         let channels = selectedChannels.sorted()
         guard !channels.isEmpty else { return }
 
@@ -202,7 +205,7 @@ struct WaveformView: View {
             gridPath.addLine(to: CGPoint(x: x, y: size.height))
             gridSec += 1
         }
-        context.stroke(gridPath, with: .color(.gray.opacity(0.15)), lineWidth: 0.5)
+        context.stroke(gridPath, with: .color(.gray.opacity(0.25)), lineWidth: 0.5)
 
         // Draw each channel
         for (row, chIdx) in channels.enumerated() {
@@ -210,7 +213,7 @@ struct WaveformView: View {
 
             // Channel label
             context.draw(
-                Text(edfData.channelNames[chIdx]).font(.system(size: 10)),
+                Text(edfData.channelNames[chIdx]).font(.system(size: 10, weight: .medium)).foregroundColor(.black),
                 at: CGPoint(x: 30, y: centerY),
                 anchor: .leading
             )
@@ -219,7 +222,7 @@ struct WaveformView: View {
             var zeroPath = Path()
             zeroPath.move(to: CGPoint(x: 0, y: centerY))
             zeroPath.addLine(to: CGPoint(x: size.width, y: centerY))
-            context.stroke(zeroPath, with: .color(.gray.opacity(0.1)), lineWidth: 0.5)
+            context.stroke(zeroPath, with: .color(.gray.opacity(0.2)), lineWidth: 0.5)
 
             // Waveform
             let data = edfData.data[chIdx]

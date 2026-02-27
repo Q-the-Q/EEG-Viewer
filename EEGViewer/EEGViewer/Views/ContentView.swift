@@ -27,16 +27,16 @@ struct ContentView: View {
                         QEEGDashboard(edfData: data, analyzer: analyzer)
                             .tabItem { Label("qEEG Analysis", systemImage: "brain.head.profile") }
                             .tag(2)
+
+                        BrainView3D(edfData: data)
+                            .tabItem { Label("3D Brain", systemImage: "brain") }
+                            .tag(3)
                     }
                 } else {
                     welcomeView
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Text("EEG Viewer")
-                        .font(.headline)
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showFilePicker = true

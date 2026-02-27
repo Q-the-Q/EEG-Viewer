@@ -29,7 +29,7 @@ struct SpectraChartView: View {
                         yStart: .value("", 0),
                         yEnd: .value("", maxYValue)
                     )
-                    .foregroundStyle(band.shadeColor.opacity(0.5))
+                    .foregroundStyle(band.shadeColor.opacity(0.25))
                 }
 
                 // Band boundaries
@@ -45,8 +45,8 @@ struct SpectraChartView: View {
                         x: .value("Frequency", point.freq),
                         y: .value("Amplitude", point.amplitude)
                     )
-                    .foregroundStyle(Color(red: 0.2, green: 0.533, blue: 0.8))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+                    .foregroundStyle(Color(red: 0.05, green: 0.3, blue: 0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 2.0))
                 }
 
                 // Area fill
@@ -55,7 +55,16 @@ struct SpectraChartView: View {
                         x: .value("Frequency", point.freq),
                         y: .value("Amplitude", point.amplitude)
                     )
-                    .foregroundStyle(Color(red: 0.2, green: 0.533, blue: 0.8).opacity(0.15))
+                    .foregroundStyle(
+                        .linearGradient(
+                            colors: [
+                                Color(red: 0.05, green: 0.3, blue: 0.7).opacity(0.35),
+                                Color(red: 0.05, green: 0.3, blue: 0.7).opacity(0.05)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                 }
             }
             .chartXScale(domain: 1...25)
