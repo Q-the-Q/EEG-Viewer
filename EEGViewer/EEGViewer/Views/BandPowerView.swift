@@ -34,7 +34,7 @@ struct BandPowerView: View {
                 Canvas { context, size in
                     drawBandTraces(context: context, size: size)
                 }
-                .frame(height: 140)
+                .frame(height: 200)
 
                 // Subtle separator
                 Rectangle()
@@ -200,10 +200,8 @@ struct BandPowerView: View {
         let windowSamples = Int(windowSec * sfreq)
 
         let maxPoints = 2000
-        let bandSpacing: Float = 50.0
         let nBands = bandTraces.count
-        let totalHeight = Float(nBands) * bandSpacing
-        let yScale = Float(size.height) / totalHeight * amplitudeScale
+        let laneHeight = Float(size.height) / Float(nBands)
 
         // Grid (subtle on dark)
         var gridPath = Path()
@@ -218,7 +216,7 @@ struct BandPowerView: View {
         context.stroke(gridPath, with: .color(.white.opacity(0.06)), lineWidth: 0.5)
 
         for (idx, trace) in bandTraces.enumerated() {
-            let centerY = CGFloat((Float(idx) + 0.5) * bandSpacing * yScale)
+            let centerY = CGFloat((Float(idx) + 0.5) * laneHeight)
 
             // Label (white for dark bg)
             context.draw(
@@ -233,10 +231,15 @@ struct BandPowerView: View {
             zeroPath.addLine(to: CGPoint(x: size.width, y: centerY))
             context.stroke(zeroPath, with: .color(.white.opacity(0.05)), lineWidth: 0.5)
 
-            // Trace
+            // Trace — auto-scale each band to fit its lane
             let data = trace.data
             let endSample = min(startSample + windowSamples, data.count)
             guard endSample > startSample else { continue }
+
+            // Find max amplitude in the visible window for this band
+            let visibleSlice = data[startSample..<endSample]
+            let peakAmp = visibleSlice.map { abs($0) }.max() ?? 1.0
+            let bandScale = peakAmp > 0 ? (laneHeight * 0.4 * amplitudeScale) / peakAmp : 1.0
 
             let actualSamples = endSample - startSample
             let step = max(1, actualSamples / maxPoints)
@@ -250,7 +253,7 @@ struct BandPowerView: View {
 
                 let value = CGFloat(data[sampleIdx])
                 let x = CGFloat(p) * xStep
-                let y = centerY - value * CGFloat(yScale) * 0.5
+                let y = centerY - value * CGFloat(bandScale)
 
                 if p == 0 {
                     path.move(to: CGPoint(x: x, y: y))
@@ -259,7 +262,7 @@ struct BandPowerView: View {
                 }
             }
 
-            context.stroke(path, with: .color(trace.color), lineWidth: 1.0)
+            context.stroke(path, with: .color(trace.color), lineWidth: 1.5)
         }
     }
 
@@ -402,18 +405,21 @@ struct BandPowerView: View {
             }
         }
 
+        // Use withUnsafeMutableBytes to guarantee the pixel buffer stays alive
+        // while CGContext holds a raw pointer to it through makeImage()
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(
-            data: &pixels,
-            width: nTime,
-            height: nFreq,
-            bitsPerComponent: 8,
-            bytesPerRow: nTime * 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        return ctx.makeImage()
+        return pixels.withUnsafeMutableBytes { ptr -> CGImage? in
+            guard let ctx = CGContext(
+                data: ptr.baseAddress,
+                width: nTime,
+                height: nFreq,
+                bitsPerComponent: 8,
+                bytesPerRow: nTime * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            return ctx.makeImage()
+        }
     }
 
     // MARK: - Playback

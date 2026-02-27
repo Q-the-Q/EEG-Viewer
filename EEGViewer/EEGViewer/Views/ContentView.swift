@@ -44,11 +44,6 @@ struct ContentView: View {
                         Label("Open EDF", systemImage: "doc.badge.plus")
                     }
                 }
-                if let data = edfData {
-                    ToolbarItem(placement: .bottomBar) {
-                        statusBar(data: data)
-                    }
-                }
             }
             .sheet(isPresented: $showFilePicker) {
                 DocumentPicker { url in
