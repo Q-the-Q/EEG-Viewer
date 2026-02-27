@@ -252,8 +252,12 @@ struct BrainView3D: View {
 
         let brainParent = SCNNode()
 
+        // Load each hemisphere OBJ once, reuse for outer shell + inner regions
+        let lhAsset = Bundle.main.url(forResource: "lh.pial", withExtension: "obj").map { MDLAsset(url: $0) }
+        let rhAsset = Bundle.main.url(forResource: "rh.pial", withExtension: "obj").map { MDLAsset(url: $0) }
+
         // 1. Outer transparent cortex shell
-        if let leftMesh = loadCortexMesh(name: "lh.pial") {
+        if let asset = lhAsset, let leftMesh = buildCortexShell(from: asset) {
             brainParent.addChildNode(leftMesh)
             self.leftHemiNode = leftMesh
         } else {
@@ -262,7 +266,7 @@ struct BrainView3D: View {
             self.leftHemiNode = fallback
         }
 
-        if let rightMesh = loadCortexMesh(name: "rh.pial") {
+        if let asset = rhAsset, let rightMesh = buildCortexShell(from: asset) {
             brainParent.addChildNode(rightMesh)
             self.rightHemiNode = rightMesh
         } else {
@@ -271,8 +275,9 @@ struct BrainView3D: View {
             self.rightHemiNode = fallback
         }
 
-        // 2. Inner segmented brain — regions light up per electrode
-        if let (regionNode, materials) = buildRegionMesh() {
+        // 2. Inner segmented brain — regions light up per electrode (reuses same assets)
+        if let lh = lhAsset, let rh = rhAsset,
+           let (regionNode, materials) = buildRegionMesh(lhAsset: lh, rhAsset: rh) {
             brainParent.addChildNode(regionNode)
             self.regionMaterials = materials
         }
@@ -334,12 +339,9 @@ struct BrainView3D: View {
         scene.rootNode.addChildNode(fillLight)
     }
 
-    // MARK: - Load Outer Cortex Shell
+    // MARK: - Build Outer Cortex Shell
 
-    private func loadCortexMesh(name: String) -> SCNNode? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "obj") else { return nil }
-
-        let asset = MDLAsset(url: url)
+    private func buildCortexShell(from asset: MDLAsset) -> SCNNode? {
         guard asset.count > 0,
               let mdlMesh = asset.object(at: 0) as? MDLMesh else { return nil }
 
@@ -374,17 +376,8 @@ struct BrainView3D: View {
 
     // MARK: - Build Segmented Inner Brain (Voronoi regions per electrode)
 
-    private func buildRegionMesh() -> (SCNNode, [String: SCNMaterial])? {
-        // Load both hemisphere OBJs via MDLAsset (same proven path as outer mesh)
-        guard let lhUrl = Bundle.main.url(forResource: "lh.pial", withExtension: "obj"),
-              let rhUrl = Bundle.main.url(forResource: "rh.pial", withExtension: "obj") else {
-            return nil
-        }
-
-        let lhAsset = MDLAsset(url: lhUrl)
-        let rhAsset = MDLAsset(url: rhUrl)
-
-        // Convert to SCNScene and extract geometry
+    private func buildRegionMesh(lhAsset: MDLAsset, rhAsset: MDLAsset) -> (SCNNode, [String: SCNMaterial])? {
+        // Convert shared assets to SCNScene and extract geometry
         let lhScene = SCNScene(mdlAsset: lhAsset)
         let rhScene = SCNScene(mdlAsset: rhAsset)
 
@@ -545,8 +538,16 @@ struct BrainView3D: View {
     // MARK: - Geometry Data Extraction
 
     /// Extract vertex positions from an SCNGeometry's vertex source.
+    /// Validates that vertex components are Float32 before reading.
     private func extractVertices(from geometry: SCNGeometry) -> [simd_float3] {
         guard let source = geometry.sources(for: .vertex).first else { return [] }
+
+        // Issue 6 fix: verify vertex data is Float32 (4 bytes per component, 3 components)
+        guard source.bytesPerComponent == 4, source.componentsPerVector >= 3 else {
+            print("BrainView3D: unexpected vertex format — \(source.bytesPerComponent) bytes/component")
+            return []
+        }
+
         let count = source.vectorCount
         let stride = source.dataStride
         let offset = source.dataOffset
