@@ -86,24 +86,6 @@ struct ContentView: View {
         }
     }
 
-    private func statusBar(data: EDFData) -> some View {
-        let eegCount = data.eegIndices.count
-        let hasECG = data.channelNames.contains(where: { $0.uppercased() == "ECG" || $0.uppercased() == "EKG" })
-        let durMin = Int(data.duration) / 60
-        let durSec = Int(data.duration) % 60
-
-        return HStack(spacing: 16) {
-            Text("\(eegCount) EEG channels")
-            if hasECG { Text("+ ECG") }
-            Divider().frame(height: 16)
-            Text("\(Int(data.sfreq)) Hz")
-            Divider().frame(height: 16)
-            Text(String(format: "%02d:%02d duration", durMin, durSec))
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
     private func loadFile(url: URL) {
         do {
             let data = try EDFReader.read(url: url)

@@ -182,6 +182,7 @@ struct BrainView3D: View {
             let decimSfreq = sfreq / Float(decimFactor)
             let decimated = filtered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
 
+            guard !decimated.isEmpty else { return ([String: [[Float]]](), [Float]()) }
             let nSamples = decimated[0].count
             let epochLen = Int(2.0 * decimSfreq)
             let epochStep = Int(0.5 * decimSfreq)
@@ -559,7 +560,9 @@ struct BrainView3D: View {
         data.withUnsafeBytes { rawBuffer in
             let basePtr = rawBuffer.baseAddress!
             for i in 0..<count {
-                let ptr = basePtr.advanced(by: i * stride + offset).assumingMemoryBound(to: Float.self)
+                let byteOffset = i * stride + offset
+                guard byteOffset + 12 <= rawBuffer.count else { break }
+                let ptr = basePtr.advanced(by: byteOffset).assumingMemoryBound(to: Float.self)
                 vertices.append(simd_float3(ptr[0], ptr[1], ptr[2]))
             }
         }
@@ -567,32 +570,38 @@ struct BrainView3D: View {
         return vertices
     }
 
-    /// Extract triangle face indices from an SCNGeometry's first element.
+    /// Extract triangle face indices from all geometry elements.
     private func extractFaces(from geometry: SCNGeometry) -> [(UInt32, UInt32, UInt32)] {
-        guard let element = geometry.elements.first else { return [] }
-        let primitiveCount = element.primitiveCount
-        let bpi = element.bytesPerIndex
-        let data = element.data
-
         var faces = [(UInt32, UInt32, UInt32)]()
-        faces.reserveCapacity(primitiveCount)
 
-        data.withUnsafeBytes { rawBuffer in
-            let basePtr = rawBuffer.baseAddress!
-            for i in 0..<primitiveCount {
-                let a: UInt32
-                let b: UInt32
-                let c: UInt32
-                if bpi == 4 {
-                    let ptr = basePtr.advanced(by: i * 3 * 4).assumingMemoryBound(to: UInt32.self)
-                    a = ptr[0]; b = ptr[1]; c = ptr[2]
-                } else if bpi == 2 {
-                    let ptr = basePtr.advanced(by: i * 3 * 2).assumingMemoryBound(to: UInt16.self)
-                    a = UInt32(ptr[0]); b = UInt32(ptr[1]); c = UInt32(ptr[2])
-                } else {
-                    continue
+        for element in geometry.elements {
+            guard element.primitiveType == .triangles else { continue }
+            let primitiveCount = element.primitiveCount
+            let bpi = element.bytesPerIndex
+            let data = element.data
+            faces.reserveCapacity(faces.count + primitiveCount)
+
+            data.withUnsafeBytes { rawBuffer in
+                let basePtr = rawBuffer.baseAddress!
+                for i in 0..<primitiveCount {
+                    let a: UInt32
+                    let b: UInt32
+                    let c: UInt32
+                    if bpi == 4 {
+                        let byteOffset = i * 3 * 4
+                        guard byteOffset + 12 <= rawBuffer.count else { break }
+                        let ptr = basePtr.advanced(by: byteOffset).assumingMemoryBound(to: UInt32.self)
+                        a = ptr[0]; b = ptr[1]; c = ptr[2]
+                    } else if bpi == 2 {
+                        let byteOffset = i * 3 * 2
+                        guard byteOffset + 6 <= rawBuffer.count else { break }
+                        let ptr = basePtr.advanced(by: byteOffset).assumingMemoryBound(to: UInt16.self)
+                        a = UInt32(ptr[0]); b = UInt32(ptr[1]); c = UInt32(ptr[2])
+                    } else {
+                        continue
+                    }
+                    faces.append((a, b, c))
                 }
-                faces.append((a, b, c))
             }
         }
 
@@ -796,8 +805,9 @@ struct BrainView3D: View {
             timer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
                 .autoconnect()
                 .sink { _ in
+                    let maxTime = max(0.01, edfData.duration - 2.0)
                     currentTime += Float(1.0 / 30.0) * speed
-                    if currentTime >= edfData.duration - 2.0 { currentTime = 0 }
+                    if currentTime >= maxTime { currentTime = 0 }
                 }
         }
     }

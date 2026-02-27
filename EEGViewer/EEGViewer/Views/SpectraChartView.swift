@@ -39,8 +39,12 @@ struct SpectraChartView: View {
     }
 
     var body: some View {
+        // Compute spectrum data once per render cycle
+        let data = spectrumData
+        let maxAmp = data.map(\.amplitude).max()
+
         VStack(spacing: 4) {
-            if let maxAmp = computeMaxAmplitude() {
+            if let maxAmp {
                 Text(String(format: "%.1f µV", maxAmp))
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -84,7 +88,7 @@ struct SpectraChartView: View {
                 }
 
                 // Area fill under curve — solid semi-opaque blue
-                ForEach(spectrumData, id: \.freq) { point in
+                ForEach(data, id: \.freq) { point in
                     AreaMark(
                         x: .value("Frequency", point.freq),
                         y: .value("Amplitude", point.amplitude)
@@ -102,7 +106,7 @@ struct SpectraChartView: View {
                 }
 
                 // Amplitude spectrum line
-                ForEach(spectrumData, id: \.freq) { point in
+                ForEach(data, id: \.freq) { point in
                     LineMark(
                         x: .value("Frequency", point.freq),
                         y: .value("Amplitude", point.amplitude)
@@ -178,10 +182,6 @@ struct SpectraChartView: View {
             points.append(SpectrumPoint(freq: freq, amplitude: amplitudeUV))
         }
         return points
-    }
-
-    private func computeMaxAmplitude() -> Float? {
-        spectrumData.map(\.amplitude).max()
     }
 
     /// Compute peak amplitude for this region (used by parent to find global max).

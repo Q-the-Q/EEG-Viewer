@@ -180,13 +180,23 @@ struct BandPowerView: View {
             let specDecimated = filtered.map { SignalProcessor.decimate($0, factor: specDecimFactor, sfreq: sfreq) }
 
             let specGfp = SignalProcessor.globalFieldPower(specDecimated)
-            let specNperseg = min(256, specGfp.count / 4)
-            let specNoverlap = specNperseg - max(4, specNperseg / 16)  // ~94% overlap
-            let spec = SignalProcessor.spectrogram(specGfp, sfreq: specDecimSfreq,
+
+            // Guard against very short signals where FFT would be invalid
+            let spec: SignalProcessor.SpectrogramResult
+            let specImage: CGImage?
+            if specGfp.count >= 32 {
+                let rawNperseg = min(256, specGfp.count / 4)
+                // Clamp to nearest lower power of two (required by vDSP FFT)
+                let specNperseg = Int(pow(2.0, floor(log2(Float(rawNperseg)))))
+                let specNoverlap = specNperseg - max(4, specNperseg / 16)
+                spec = SignalProcessor.spectrogram(specGfp, sfreq: specDecimSfreq,
                                                     nperseg: specNperseg,
                                                     noverlap: specNoverlap)
-
-            let specImage = BandPowerView.renderSpectrogramImage(spec: spec, maxFreq: 50.0)
+                specImage = BandPowerView.renderSpectrogramImage(spec: spec, maxFreq: 50.0)
+            } else {
+                spec = SignalProcessor.SpectrogramResult(frequencies: [], times: [], power: [])
+                specImage = nil
+            }
 
             return (zip(bandNames, bandData).map { ($0, $1) }, spec, decimSfreq, specImage)
         }.value
