@@ -1,41 +1,53 @@
 # EEG Viewer
 
-A Python desktop application for EEG waveform visualization, quantitative EEG (qEEG) analysis, and topographic brain mapping from standard `.edf` (European Data Format) files.
+A cross-platform EEG visualization and quantitative EEG (qEEG) analysis application for standard `.edf` (European Data Format) files. Available as both a **Python desktop application** (macOS/Linux/Windows) and a **native iPadOS app** (Swift/SwiftUI).
 
-Built with PyQt5 for the GUI, MNE-Python for EEG data handling, and matplotlib for publication-quality spectra and topomap visualizations. Output is styled to match clinical qEEG reports.
+Both platforms perform the same core analysis — magnitude spectra, topographic Z-score maps, coherence matrices, hemispheric asymmetry, and peak frequency detection — with output styled to match clinical qEEG reports.
 
 ---
 
-## Features
+## Platforms
 
-### Waveform Viewer
+### Python Desktop App
+
+Built with PyQt5 for the GUI, MNE-Python for EEG data handling, and matplotlib for publication-quality spectra and topomap visualizations.
+
+**Features:**
 - **Multi-channel EEG display** of all 19 standard 10-20 channels plus ECG
 - **Two playback modes**: real-time animated playback with adjustable speed (0.5x-4x), and static scrollable view
 - **Channel selection**: toggle individual channels on/off
 - **Amplitude scaling**: adjustable gain for waveform traces
 - **Time window**: configurable display windows (2s, 5s, 10s, 20s, 30s, 60s)
 - **Playback scrubber**: seek to any point in the recording
-
-### qEEG Analysis
-- **Magnitude Spectra**: amplitude spectrum plots for Frontal, Central, and Posterior brain regions (1-25 Hz), with colored band shading and 1 Hz gridlines
-- **Topographic Maps**: four head maps showing relative power Z-scores for Delta, Theta, Alpha, and Beta bands with a custom colormap matching clinical reports
-- **Coherence Matrix**: 19x19 channel coherence heatmap for each frequency band
-- **Hemispheric Asymmetry**: bar charts showing ln(Right) - ln(Left) power asymmetry for 8 homologous electrode pairs
-- **Peak Frequency Table**: alpha peak and dominant frequency per channel
-
-### Export
+- **qEEG Analysis**: magnitude spectra, topographic maps, coherence matrix, hemispheric asymmetry, peak frequencies
 - **PDF Report**: multi-page clinical-style report with embedded spectra, topomaps, and data tables
-- **CSV Export**: all numerical results (band powers, relative powers, Z-scores, asymmetry, peak frequencies) in tabular format
+- **CSV Export**: all numerical results in tabular format
+
+### iPadOS App
+
+Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerate framework for high-performance DSP. Zero external dependencies — EDF parsing, FFT, and all signal processing use only Apple frameworks.
+
+**Features:**
+- **EEG Waveform Viewer**: multi-channel scrollable waveform display with pinch-to-zoom, amplitude scaling, and time window control
+- **Band Waveforms**: filtered waveform traces per frequency band (Delta, Theta, Alpha, Beta)
+- **qEEG Analysis Dashboard**:
+  - **Magnitude Spectra**: Frontal, Central, and Posterior region amplitude spectra (1–30 Hz) with shared Y-axis scaling using Swift Charts
+  - **Topographic Z-Score Maps**: four interpolated head maps (Delta, Theta, Alpha, Beta) rendered via CoreGraphics with a custom clinical colormap
+  - **Coherence Matrix**: inter-channel coherence heatmap rendered on Canvas, with band selection shared across all recordings
+  - **Hemispheric Asymmetry**: bar charts showing ln(Right) − ln(Left) for 8 homologous pairs, with shared band picker
+  - **Peak Frequency Table**: alpha peak and dominant frequency per channel
+- **Multi-EDF Comparison**: compare up to 3 EDF recordings side-by-side (1 primary + 2 comparisons) with synchronized band selection and shared spectra Y-axis
+- **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage)
+- **3D Brain View**: interactive SceneKit visualization of electrode positions on a brain model
+- **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording
 
 ---
 
 ## Installation
 
-### Requirements
-- Python 3.9 or later
-- macOS, Linux, or Windows
+### Python Desktop App
 
-### Setup
+**Requirements:** Python 3.9 or later · macOS, Linux, or Windows
 
 ```bash
 cd "EEG Viewer"
@@ -49,7 +61,7 @@ source venv/bin/activate   # macOS/Linux
 pip install -r requirements.txt
 ```
 
-### Dependencies
+**Dependencies:**
 | Package | Purpose |
 |---------|---------|
 | PyQt5 | Desktop GUI framework |
@@ -60,15 +72,24 @@ pip install -r requirements.txt
 | matplotlib | Spectra plots, topographic maps, embedded in Qt |
 | reportlab | PDF report generation |
 
+### iPadOS App
+
+**Requirements:** Xcode 15+ · iPadOS 16+ (uses `ImageRenderer`, Swift Charts)
+
+1. Open `EEGViewer/EEGViewer.xcodeproj` in Xcode
+2. Select your iPad device or simulator as the build target
+3. Build and run (⌘R)
+
+No external dependencies — the app uses only Apple frameworks (SwiftUI, Accelerate, CoreGraphics, SceneKit, Charts).
+
 ---
 
 ## Usage
 
-```bash
-# Activate the virtual environment
-source venv/bin/activate
+### Python Desktop App
 
-# Launch the application
+```bash
+source venv/bin/activate
 python main.py
 ```
 
@@ -77,6 +98,15 @@ python main.py
 3. The **Waveform** tab shows the raw EEG traces
 4. The **qEEG Analysis** tab automatically computes and displays all analyses
 5. Use **Export** to save results as PDF or CSV
+
+### iPadOS App
+
+1. Tap **"Open EDF File"** on the welcome screen (or the toolbar button)
+2. Select a `.edf` file from Files
+3. Navigate tabs: **EEG Waveform** → **Band Waveforms** → **qEEG Analysis** → **3D Brain**
+4. In the qEEG Analysis tab, tap **"Run qEEG Analysis"** to compute
+5. Use **"Add Comparison EDF"** to load additional recordings for side-by-side comparison
+6. Tap **"Export PDF"** to generate and share a clinical report
 
 ---
 
@@ -127,6 +157,8 @@ For the magnitude spectra display, channels are grouped into three regions match
 ---
 
 ## Calculations and Signal Processing
+
+> **Note:** The technical details below describe the signal processing pipeline, which is implemented equivalently in both the Python desktop app (using scipy/numpy/MNE) and the iPadOS app (using Apple's Accelerate/vDSP framework). The iPadOS app performs all FFT, PSD, and filtering operations natively via `vDSP.FFT` and `vDSP` vector operations — no Python bridge or external libraries are needed.
 
 ### Preprocessing Pipeline
 
@@ -257,10 +289,11 @@ For each channel, two peak frequencies are identified:
 
 ```
 EEG Viewer/
-    main.py                              # Application entry point
+    main.py                              # Python app entry point
     requirements.txt                     # Python dependencies
     README.md                            # This file
-    eeg_viewer/
+
+    eeg_viewer/                          # ── Python Desktop App ──
         __init__.py
         app.py                           # QApplication setup, matplotlib/pyqtgraph config
         data/
@@ -290,6 +323,31 @@ EEG Viewer/
             __init__.py
             playback_worker.py           # QTimer-based waveform playback at 30 FPS
             analysis_worker.py           # QThread worker for background qEEG computation
+
+    EEGViewer/                           # ── iPadOS App (Xcode project) ──
+        EEGViewer.xcodeproj/             # Xcode project file
+        EEGViewer/
+            EEGViewerApp.swift           # @main App entry point
+            Models/
+                Constants.swift          # Frequency bands, electrode positions, region maps
+                EDFData.swift            # EDF data model (signals, headers, metadata)
+                EDFReader.swift          # Pure-Swift EDF parser (no dependencies)
+                QEEGAnalyzer.swift       # Async analysis pipeline (FFT, PSD, coherence)
+                SignalProcessor.swift    # DSP via Accelerate (Welch PSD, filtering, coherence)
+            Views/
+                ContentView.swift        # Tab navigation, file picker, data management
+                WaveformView.swift       # Multi-channel EEG waveform display
+                BandPowerView.swift      # Per-band filtered waveform traces
+                QEEGDashboard.swift      # qEEG dashboard + multi-EDF comparison manager
+                SpectraChartView.swift   # Regional magnitude spectra (Swift Charts)
+                TopoMapView.swift        # Topographic Z-score head map
+                CoherenceHeatmapView.swift  # Coherence heatmap (Canvas)
+                AsymmetryChartView.swift # Hemispheric asymmetry bar chart (Swift Charts)
+                BrainView3D.swift        # 3D brain visualization (SceneKit)
+            Utilities/
+                ColorMap.swift           # Clinical-style colormap (blue → white → red)
+                TopoMapRenderer.swift    # CoreGraphics topomap renderer (interpolation + head outline)
+                PDFExporter.swift        # PDF report generator (ImageRenderer + UIGraphicsPDFRenderer)
 ```
 
 ---
@@ -337,7 +395,7 @@ Tested with recordings from the **Zeto WR-19** wireless EEG headset.
 - **Automated artifact rejection only**: The application uses a fixed peak-to-peak amplitude threshold (100 µV) for artifact rejection. While effective for gross artifacts (movement, muscle bursts, electrode pops), it does not include more sophisticated methods like ICA-based eye artifact removal, spatial filtering, or manual epoch review. Clinical qEEG software may use additional artifact detection strategies.
 
 - **Fixed impedance thresholds**: Impedance detection uses fixed thresholds for low-frequency noise floor and 1/f slope. Different populations (children, elderly, patients with pathology) may require tuning these parameters for optimal detection.
-- **Single recording analysis**: The application analyzes one EDF file at a time. It does not support longitudinal comparison, group analysis, or treatment-response tracking.
+- **Limited comparison support**: The iPadOS app supports side-by-side comparison of up to 3 recordings. The Python desktop app analyzes one file at a time. Neither platform supports group-level statistical analysis or longitudinal treatment-response tracking.
 - **No source localization**: Analysis is at the sensor (scalp electrode) level. Source localization methods like LORETA or sLORETA are not implemented.
 - **Not a medical device**: This software is for educational and research purposes. It is not FDA-cleared and should not be used for clinical diagnosis.
 
