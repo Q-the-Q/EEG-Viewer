@@ -425,10 +425,11 @@ struct BrainView3D: View {
 
         // .constant lighting — scene lights have zero effect on this material.
         // Only the Fresnel fragment shader produces a faint blue rim glow.
+        // Single-sided: outer shell is convex, back faces are never visible from outside.
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.diffuse.contents = UIColor.clear
-        material.isDoubleSided = true
+        material.isDoubleSided = false
         material.blendMode = .alpha
         material.writesToDepthBuffer = false
         material.shaderModifiers = [.fragment: BrainView3D.fresnelShader]
@@ -701,9 +702,18 @@ struct BrainView3D: View {
             minB = simd_min(minB, v)
             maxB = simd_max(maxB, v)
         }
-        let extent = maxB - minB
-        let volume = max(extent.x, 0.001) * max(extent.y, 0.001) * max(extent.z, 0.001)
-        let cellSize = powf(volume / Float(targetVertexCount), 1.0 / 3.0)
+
+        // Approximate surface area from face triangles for accurate cell sizing.
+        // A brain mesh is a 2D manifold in 3D space — volume-based cellSize would
+        // be wrong because vertices lie on the surface, not throughout the volume.
+        var surfaceArea: Float = 0
+        for face in faces {
+            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
+            guard i0 < vertices.count, i1 < vertices.count, i2 < vertices.count else { continue }
+            let cross = simd_cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0])
+            surfaceArea += simd_length(cross) * 0.5
+        }
+        let cellSize = sqrtf(max(surfaceArea, 0.001) / Float(targetVertexCount))
 
         // Map each vertex to a grid cell
         var cellMap: [GridCell: [Int]] = [:]
@@ -737,10 +747,13 @@ struct BrainView3D: View {
         // Remap face indices, skip degenerate triangles
         var newFaces = [(UInt32, UInt32, UInt32)]()
         newFaces.reserveCapacity(faces.count)
+        let vertCount = vertexCellKey.count
         for face in faces {
-            let c0 = vertexCellKey[Int(face.0)]
-            let c1 = vertexCellKey[Int(face.1)]
-            let c2 = vertexCellKey[Int(face.2)]
+            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
+            guard i0 < vertCount, i1 < vertCount, i2 < vertCount else { continue }
+            let c0 = vertexCellKey[i0]
+            let c1 = vertexCellKey[i1]
+            let c2 = vertexCellKey[i2]
             guard let n0 = cellToNewIdx[c0],
                   let n1 = cellToNewIdx[c1],
                   let n2 = cellToNewIdx[c2] else { continue }

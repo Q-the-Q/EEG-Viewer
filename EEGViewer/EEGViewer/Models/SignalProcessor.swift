@@ -138,7 +138,10 @@ struct SignalProcessor {
                 }
             }
 
-            // Compute magnitude squared
+            // Compute magnitude squared.
+            // Safe to read realPart/imagPart here: withUnsafeMutableBufferPointer closures
+            // above mutated the backing storage in-place via splitComplex pointers, and
+            // reading after closure exit is valid — the array storage is not invalidated.
             var magnitudes = [Float](repeating: 0, count: nFreqs)
 
             // DC component
