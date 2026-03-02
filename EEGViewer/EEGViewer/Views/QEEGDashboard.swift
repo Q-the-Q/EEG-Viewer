@@ -71,11 +71,13 @@ struct QEEGDashboard: View {
     private var allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)] {
         var list = [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)]()
         if let r = analyzer.results {
-            list.append((index: 1, filename: primaryFilename, results: r, sessionID: nil))
+            // Use sourceFilename baked into results at analysis time — more reliable
+            // than the view-passed primaryFilename which can get stale during re-renders
+            list.append((index: 1, filename: r.sourceFilename, results: r, sessionID: nil))
         }
         for (i, session) in comparisonManager.sessions.enumerated() {
             if let r = session.analyzer.results {
-                list.append((index: i + 2, filename: session.filename, results: r, sessionID: session.id))
+                list.append((index: i + 2, filename: r.sourceFilename, results: r, sessionID: session.id))
             }
         }
         return list

@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showFilePicker = false
     @State private var selectedTab = 0
     @State private var errorMessage: String?
+    @State private var fileLoadID = UUID()
     @StateObject private var analyzer = QEEGAnalyzer()
 
     var body: some View {
@@ -33,6 +34,7 @@ struct ContentView: View {
                             .tabItem { Label("3D Brain", systemImage: "brain") }
                             .tag(3)
                     }
+                    .id(fileLoadID)
                 } else {
                     welcomeView
                 }
@@ -93,6 +95,10 @@ struct ContentView: View {
             self.edfData = data
             self.loadedFilename = url.lastPathComponent
             self.errorMessage = nil
+            // Reset analyzer so stale results from previous file are cleared
+            self.analyzer.results = nil
+            // New ID forces SwiftUI to recreate all tab views (resets @State, re-fires .onAppear)
+            self.fileLoadID = UUID()
         } catch {
             self.errorMessage = error.localizedDescription
         }
