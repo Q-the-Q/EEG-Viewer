@@ -9,6 +9,8 @@ struct AsymmetryChartView: View {
     let results: QEEGResults
     /// Which frequency band to display. Controlled by the parent view.
     var selectedBand: String = "Alpha"
+    /// Shared x-axis range across all recordings for comparability. Nil = auto-scale.
+    var sharedRange: Float? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -17,7 +19,7 @@ struct AsymmetryChartView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let pairs = results.asymmetry[selectedBand] {
-                Chart(pairs, id: \.pair) { item in
+                let chart = Chart(pairs, id: \.pair) { item in
                     BarMark(
                         x: .value("Asymmetry", item.value),
                         y: .value("Pair", item.pair)
@@ -42,6 +44,12 @@ struct AsymmetryChartView: View {
                             }
                         }
                     }
+                }
+
+                if let range = sharedRange {
+                    chart.chartXScale(domain: -range...range)
+                } else {
+                    chart
                 }
             }
         }

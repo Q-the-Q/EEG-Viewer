@@ -397,7 +397,7 @@ struct BandPowerView: View {
     // MARK: - Spectrogram Image Rendering
 
     /// Pre-render the full spectrogram to a CGImage using the jet colormap.
-    private static func renderSpectrogramImage(spec: SignalProcessor.SpectrogramResult,
+    nonisolated private static func renderSpectrogramImage(spec: SignalProcessor.SpectrogramResult,
                                                 maxFreq: Float) -> CGImage? {
         let nTime = spec.times.count
         guard nTime > 0 else { return nil }

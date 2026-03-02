@@ -122,6 +122,7 @@ struct QEEGDashboard: View {
     private var dashboardContent: some View {
         let results = allResults
         let sharedSpectraMaxY = computeSharedSpectraMaxY(allResults: results)
+        let sharedAsymmetryRange = computeSharedAsymmetryRange(allResults: results, band: selectedCoherenceBand)
 
         return ScrollView {
             VStack(spacing: 20) {
@@ -176,7 +177,8 @@ struct QEEGDashboard: View {
                             .frame(minHeight: 300)
 
                         AsymmetryChartView(results: entry.results,
-                                           selectedBand: selectedCoherenceBand)
+                                           selectedBand: selectedCoherenceBand,
+                                           sharedRange: sharedAsymmetryRange)
                             .frame(minHeight: 300)
                     }
                 }
@@ -393,6 +395,24 @@ struct QEEGDashboard: View {
             }
         }
         return globalPeak + 0.2
+    }
+
+    /// Compute a shared symmetric x-axis range for asymmetry charts across all recordings.
+    /// When only one recording, returns nil (auto-scale). With 2+, returns the max |value| + padding.
+    private func computeSharedAsymmetryRange(
+        allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)],
+        band: String
+    ) -> Float? {
+        guard allResults.count > 1 else { return nil }
+        var maxAbs: Float = 0
+        for entry in allResults {
+            if let pairs = entry.results.asymmetry[band] {
+                for item in pairs {
+                    maxAbs = max(maxAbs, abs(item.value))
+                }
+            }
+        }
+        return maxAbs + 0.05
     }
 
     // MARK: - Topomap Row
