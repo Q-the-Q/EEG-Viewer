@@ -2,6 +2,8 @@
 // 3D brain visualization with real MRI-derived cortex mesh.
 // Uses FreeSurfer pial surface meshes (Brainder.org, CC BY-SA 3.0) loaded via ModelIO.
 // Transparent outer cortex with segmented inner brain regions that light up per electrode.
+// Region colors blend smoothly between neighbors via per-vertex inverse-distance weighting.
+// Meshes are decimated via vertex clustering for performance (~300k → ~40k inner, ~12k outer).
 
 import SwiftUI
 import SceneKit
@@ -9,14 +11,28 @@ import SceneKit.ModelIO
 import ModelIO
 import Combine
 
+/// Hashable 3D grid cell key for vertex clustering decimation.
+private struct GridCell: Hashable {
+    let x: Int32, y: Int32, z: Int32
+}
+
 struct BrainView3D: View {
     let edfData: EDFData
 
     // Scene state
     @State private var scene = SCNScene()
-    @State private var regionMaterials: [String: SCNMaterial] = [:]
     @State private var leftHemiNode: SCNNode?
     @State private var rightHemiNode: SCNNode?
+    @State private var brainParentNode: SCNNode?
+
+    // Region mesh state (per-vertex color blending)
+    @State private var regionMeshNode: SCNNode?
+    @State private var regionVertexSource: SCNGeometrySource?
+    @State private var regionNormalSource: SCNGeometrySource?
+    @State private var regionFaceElement: SCNGeometryElement?
+    @State private var regionVertexCount: Int = 0
+    @State private var vertexBlendWeights: [[(idx: Int, weight: Float)]] = []
+    @State private var electrodeNames: [String] = []
 
     // Data state
     @State private var isProcessing = true
@@ -31,6 +47,10 @@ struct BrainView3D: View {
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
 
+    // Fixed region appearance
+    private let regionBrightness: Float = 0.2
+    private let regionOpacity: Float = 0.10
+
     enum BandSelection: String, CaseIterable {
         case all = "All"
         case delta = "Delta"
@@ -39,17 +59,27 @@ struct BrainView3D: View {
         case beta = "Beta"
     }
 
-    // MARK: - Fresnel Rim Glow Shader (outer shell)
+    // MARK: - Shaders
 
+    /// Ultra-subtle Fresnel rim glow for outer cortex shell.
+    /// Uses .constant lighting so scene lights don't interfere — only edges glow faintly blue.
     private static let fresnelShader = """
     #pragma transparent
     #pragma body
     float NdotV = dot(_surface.normal, normalize(_surface.view));
     NdotV = clamp(NdotV, 0.0, 1.0);
-    float fresnel = pow(1.0 - NdotV, 3.0);
-    vec3 rimColor = vec3(0.30, 0.45, 0.85);
-    _output.color.rgb += rimColor * fresnel * 0.7;
-    _output.color.a = mix(0.005, 0.15, fresnel);
+    float fresnel = pow(1.0 - NdotV, 4.0);
+    vec3 rimColor = vec3(0.20, 0.30, 0.60);
+    _output.color.rgb = rimColor * fresnel * 0.12;
+    _output.color.a = fresnel * 0.008;
+    """
+
+    /// Surface shader for inner regions: moves vertex colors from diffuse into emission
+    /// so .constant lighting model renders them without scene light interference.
+    private static let vertexColorEmissionShader = """
+    #pragma body
+    _surface.emission = _surface.diffuse;
+    _surface.diffuse = float4(0.0, 0.0, 0.0, 0.0);
     """
 
     // MARK: - Connectivity map
@@ -70,6 +100,10 @@ struct BrainView3D: View {
 
     private static let brainScale: Float = 0.004
     private static let brainCenterFS = simd_float3(-0.4, -14.9, 0.7)
+
+    /// Decimation targets (vertex counts per combined mesh)
+    private static let innerMeshTarget = 40_000
+    private static let outerMeshTarget = 12_000
 
     // MARK: - Body
 
@@ -240,24 +274,33 @@ struct BrainView3D: View {
         self.bandPowerData = powerData
         self.epochTimes = times
 
-        buildScene()
+        // Load mesh assets once (shared by outer shell and inner regions)
+        let lhAsset = Bundle.main.url(forResource: "lh.pial", withExtension: "obj")
+            .map { MDLAsset(url: $0) }
+        let rhAsset = Bundle.main.url(forResource: "rh.pial", withExtension: "obj")
+            .map { MDLAsset(url: $0) }
+
+        // Phase 1: Build scene with decimated outer shell (fast → visible immediately)
+        buildScene(lhAsset: lhAsset, rhAsset: rhAsset)
         isProcessing = false
+
+        // Phase 2: Build inner region mesh (heavier computation, appears shortly after)
+        if let lh = lhAsset, let rh = rhAsset,
+           let regionNode = buildRegionMesh(lhAsset: lh, rhAsset: rh) {
+            brainParentNode?.addChildNode(regionNode)
+        }
         updateColors()
     }
 
     // MARK: - 3D Brain Scene
 
-    private func buildScene() {
+    private func buildScene(lhAsset: MDLAsset?, rhAsset: MDLAsset?) {
         scene = SCNScene()
         scene.background.contents = UIColor(red: 0.03, green: 0.03, blue: 0.06, alpha: 1.0)
 
         let brainParent = SCNNode()
 
-        // Load each hemisphere OBJ once, reuse for outer shell + inner regions
-        let lhAsset = Bundle.main.url(forResource: "lh.pial", withExtension: "obj").map { MDLAsset(url: $0) }
-        let rhAsset = Bundle.main.url(forResource: "rh.pial", withExtension: "obj").map { MDLAsset(url: $0) }
-
-        // 1. Outer transparent cortex shell
+        // 1. Outer transparent cortex shell (decimated, ultra-subtle Fresnel only)
         if let asset = lhAsset, let leftMesh = buildCortexShell(from: asset) {
             brainParent.addChildNode(leftMesh)
             self.leftHemiNode = leftMesh
@@ -276,19 +319,11 @@ struct BrainView3D: View {
             self.rightHemiNode = fallback
         }
 
-        // 2. Inner segmented brain — regions light up per electrode (reuses same assets)
-        if let lh = lhAsset, let rh = rhAsset,
-           let (regionNode, materials) = buildRegionMesh(lhAsset: lh, rhAsset: rh) {
-            brainParent.addChildNode(regionNode)
-            self.regionMaterials = materials
-        }
-
-        // Brain stem
+        // Brain stem (constant lighting — no light amplification)
         let stemGeom = SCNCapsule(capRadius: 0.05, height: 0.12)
         let stemMat = SCNMaterial()
-        stemMat.lightingModel = .physicallyBased
-        stemMat.diffuse.contents = UIColor(red: 0.12, green: 0.10, blue: 0.16, alpha: 0.4)
-        stemMat.roughness.contents = NSNumber(value: 0.6)
+        stemMat.lightingModel = .constant
+        stemMat.emission.contents = UIColor(red: 0.06, green: 0.05, blue: 0.08, alpha: 1.0)
         stemMat.transparency = 0.35
         stemMat.isDoubleSided = true
         stemGeom.materials = [stemMat]
@@ -296,10 +331,11 @@ struct BrainView3D: View {
         stemNode.position = SCNVector3(0, -0.32, -0.08)
         brainParent.addChildNode(stemNode)
 
+        // Connectivity lines (decorative)
         addConnectivityLines(to: brainParent)
-        addSurfaceMarkers(to: brainParent)
-        addParticleSystem(to: brainParent)
 
+        // Save reference for adding inner mesh later
+        self.brainParentNode = brainParent
         scene.rootNode.addChildNode(brainParent)
 
         // Camera
@@ -307,24 +343,24 @@ struct BrainView3D: View {
         cameraNode.camera = SCNCamera()
         cameraNode.camera?.fieldOfView = 38
         cameraNode.camera?.wantsHDR = true
-        cameraNode.camera?.bloomIntensity = 1.0
-        cameraNode.camera?.bloomThreshold = 0.4
+        cameraNode.camera?.bloomIntensity = 0.4
+        cameraNode.camera?.bloomThreshold = 1.5
         cameraNode.position = SCNVector3(0, 0.25, 1.4)
         cameraNode.look(at: SCNVector3(0, 0.05, 0))
         scene.rootNode.addChildNode(cameraNode)
 
-        // Lights
+        // Lights (ambient + soft directional for connectivity line aesthetics)
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 120
+        ambientLight.light?.intensity = 80
         ambientLight.light?.color = UIColor(red: 0.5, green: 0.6, blue: 1.0, alpha: 1.0)
         scene.rootNode.addChildNode(ambientLight)
 
         let dirLight = SCNNode()
         dirLight.light = SCNLight()
         dirLight.light?.type = .directional
-        dirLight.light?.intensity = 300
+        dirLight.light?.intensity = 150
         dirLight.light?.color = UIColor(red: 0.8, green: 0.85, blue: 1.0, alpha: 1.0)
         dirLight.position = SCNVector3(0.5, 1.5, 2.0)
         dirLight.look(at: SCNVector3(0, 0, 0))
@@ -333,14 +369,14 @@ struct BrainView3D: View {
         let fillLight = SCNNode()
         fillLight.light = SCNLight()
         fillLight.light?.type = .directional
-        fillLight.light?.intensity = 100
+        fillLight.light?.intensity = 60
         fillLight.light?.color = UIColor(red: 0.4, green: 0.5, blue: 0.8, alpha: 1.0)
         fillLight.position = SCNVector3(-0.5, -1.0, 1.0)
         fillLight.look(at: SCNVector3(0, 0, 0))
         scene.rootNode.addChildNode(fillLight)
     }
 
-    // MARK: - Build Outer Cortex Shell
+    // MARK: - Build Outer Cortex Shell (decimated)
 
     private func buildCortexShell(from asset: MDLAsset) -> SCNNode? {
         guard asset.count > 0,
@@ -355,30 +391,60 @@ struct BrainView3D: View {
         }
         guard let geometry = meshGeometry else { return nil }
 
+        // Decimate the outer shell for performance (each hemisphere ~150k → ~6k vertices)
+        let origVerts = extractVertices(from: geometry)
+        let origFaces = extractFaces(from: geometry)
+        let perHemiTarget = BrainView3D.outerMeshTarget / 2
+        let (decVerts, decFaces) = decimateMesh(
+            vertices: origVerts, faces: origFaces,
+            targetVertexCount: perHemiTarget
+        )
+        let decNormals = computeVertexNormals(vertices: decVerts, faces: decFaces)
+
+        // Build decimated SCNGeometry
+        let scnVerts = decVerts.map { SCNVector3($0.x, $0.y, $0.z) }
+        let scnNormals = decNormals.map { SCNVector3($0.x, $0.y, $0.z) }
+        let vertexSource = SCNGeometrySource(vertices: scnVerts)
+        let normalSource = SCNGeometrySource(normals: scnNormals)
+
+        var flatIdx = [UInt32]()
+        flatIdx.reserveCapacity(decFaces.count * 3)
+        for f in decFaces {
+            flatIdx.append(f.0); flatIdx.append(f.1); flatIdx.append(f.2)
+        }
+        let idxData = flatIdx.withUnsafeBufferPointer { Data(buffer: $0) }
+        let faceElement = SCNGeometryElement(
+            data: idxData, primitiveType: .triangles,
+            primitiveCount: decFaces.count,
+            bytesPerIndex: MemoryLayout<UInt32>.size
+        )
+
+        let decimatedGeometry = SCNGeometry(
+            sources: [vertexSource, normalSource], elements: [faceElement]
+        )
+
+        // .constant lighting — scene lights have zero effect on this material.
+        // Only the Fresnel fragment shader produces a faint blue rim glow.
+        // Single-sided: outer shell is convex, back faces are never visible from outside.
         let material = SCNMaterial()
-        material.lightingModel = .physicallyBased
-        material.diffuse.contents = UIColor(red: 0.6, green: 0.65, blue: 0.8, alpha: 0.03)
-        material.metalness.contents = NSNumber(value: 0.1)
-        material.roughness.contents = NSNumber(value: 0.05)
-        material.transparency = 0.04
-        material.transparencyMode = .dualLayer
-        material.isDoubleSided = true
-        material.blendMode = .add
+        material.lightingModel = .constant
+        material.diffuse.contents = UIColor.clear
+        material.isDoubleSided = false
+        material.blendMode = .alpha
         material.writesToDepthBuffer = false
         material.shaderModifiers = [.fragment: BrainView3D.fresnelShader]
-        geometry.materials = [material]
+        decimatedGeometry.materials = [material]
 
-        let meshNode = SCNNode(geometry: geometry)
+        let meshNode = SCNNode(geometry: decimatedGeometry)
         let containerNode = SCNNode()
         containerNode.addChildNode(meshNode)
         applyBrainTransform(to: containerNode)
         return containerNode
     }
 
-    // MARK: - Build Segmented Inner Brain (Voronoi regions per electrode)
+    // MARK: - Build Segmented Inner Brain (decimated, per-vertex blended regions)
 
-    private func buildRegionMesh(lhAsset: MDLAsset, rhAsset: MDLAsset) -> (SCNNode, [String: SCNMaterial])? {
-        // Convert shared assets to SCNScene and extract geometry
+    private func buildRegionMesh(lhAsset: MDLAsset, rhAsset: MDLAsset) -> SCNNode? {
         let lhScene = SCNScene(mdlAsset: lhAsset)
         let rhScene = SCNScene(mdlAsset: rhAsset)
 
@@ -393,21 +459,27 @@ struct BrainView3D: View {
 
         guard let lhGeo = lhGeometry, let rhGeo = rhGeometry else { return nil }
 
-        // Extract vertex positions from SCNGeometry sources
-        let lhVerts = extractVertices(from: lhGeo)
-        let rhVerts = extractVertices(from: rhGeo)
-        let lhFaces = extractFaces(from: lhGeo)
-        let rhFaces = extractFaces(from: rhGeo)
+        // Extract full-resolution vertices and faces
+        let lhVertsOrig = extractVertices(from: lhGeo)
+        let rhVertsOrig = extractVertices(from: rhGeo)
+        let lhFacesOrig = extractFaces(from: lhGeo)
+        let rhFacesOrig = extractFaces(from: rhGeo)
 
-        guard !lhVerts.isEmpty, !rhVerts.isEmpty else { return nil }
+        guard !lhVertsOrig.isEmpty, !rhVertsOrig.isEmpty else { return nil }
 
-        // Merge both hemispheres
-        let lhCount = UInt32(lhVerts.count)
-        let allVerts = lhVerts + rhVerts
-        var allFaces = lhFaces
-        for face in rhFaces {
-            allFaces.append((face.0 + lhCount, face.1 + lhCount, face.2 + lhCount))
+        // Combine hemispheres
+        let lhCount = UInt32(lhVertsOrig.count)
+        let allVertsOrig = lhVertsOrig + rhVertsOrig
+        var allFacesOrig = lhFacesOrig
+        for face in rhFacesOrig {
+            allFacesOrig.append((face.0 + lhCount, face.1 + lhCount, face.2 + lhCount))
         }
+
+        // Decimate combined mesh (~300k → ~40k vertices)
+        let (allVerts, allFaces) = decimateMesh(
+            vertices: allVertsOrig, faces: allFacesOrig,
+            targetVertexCount: BrainView3D.innerMeshTarget
+        )
 
         // Get electrode positions in SceneKit space
         let channels = edfData.eegChannelNames
@@ -425,115 +497,118 @@ struct BrainView3D: View {
         let cy = BrainView3D.brainCenterFS.y
         let cz = BrainView3D.brainCenterFS.z
 
-        // Assign each vertex to nearest electrode (transform to SceneKit space for comparison)
-        var vertexAssignment = [Int](repeating: 0, count: allVerts.count)
+        // Per-vertex blend weights: top 3 nearest electrodes, inverse distance squared.
+        // Now operates on ~40k decimated vertices instead of ~300k — ~7.5× faster.
+        var blendWeights = [[(idx: Int, weight: Float)]]()
+        blendWeights.reserveCapacity(allVerts.count)
+
         for vi in 0..<allVerts.count {
             let v = allVerts[vi]
-            // FS → SceneKit: SCN.X = (FS.X-cx)*s, SCN.Y = (FS.Z-cz)*s+0.05, SCN.Z = -(FS.Y-cy)*s
             let sx = (v.x - cx) * s
             let sy = (v.z - cz) * s + 0.05
             let sz = -(v.y - cy) * s
 
-            var minDist2: Float = .greatestFiniteMagnitude
-            var bestIdx = 0
+            var distances = [(Int, Float)]()
+            distances.reserveCapacity(electrodeInfo.count)
             for (ei, info) in electrodeInfo.enumerated() {
                 let dx = sx - info.pos.x
                 let dy = sy - info.pos.y
                 let dz = sz - info.pos.z
-                let dist2 = dx * dx + dy * dy + dz * dz
-                if dist2 < minDist2 {
-                    minDist2 = dist2
-                    bestIdx = ei
-                }
+                distances.append((ei, sqrtf(dx * dx + dy * dy + dz * dz)))
             }
-            vertexAssignment[vi] = bestIdx
+            distances.sort { $0.1 < $1.1 }
+
+            let topK = min(3, distances.count)
+            var weights = [(idx: Int, weight: Float)]()
+            var totalWeight: Float = 0
+            for k in 0..<topK {
+                let d = max(distances[k].1, 0.001)
+                let w = 1.0 / (d * d)
+                weights.append((idx: distances[k].0, weight: w))
+                totalWeight += w
+            }
+            for k in 0..<weights.count {
+                weights[k].weight /= totalWeight
+            }
+            blendWeights.append(weights)
         }
 
-        // Group faces by electrode (majority vote)
-        var facesPerElectrode = [[Int]](repeating: [], count: electrodeInfo.count)
-        for (fi, face) in allFaces.enumerated() {
-            let a0 = vertexAssignment[Int(face.0)]
-            let a1 = vertexAssignment[Int(face.1)]
-            let a2 = vertexAssignment[Int(face.2)]
-            let winner: Int
-            if a0 == a1 || a0 == a2 { winner = a0 }
-            else if a1 == a2 { winner = a1 }
-            else { winner = a0 }
-            facesPerElectrode[winner].append(fi)
-        }
+        self.electrodeNames = electrodeInfo.map { $0.name }
+        self.vertexBlendWeights = blendWeights
 
-        // Build vertex array in FS space (transform applied via node)
+        // Build vertex data in FreeSurfer space (transform applied via parent node)
         let fsVerts: [SCNVector3] = allVerts.map { SCNVector3($0.x, $0.y, $0.z) }
 
-        // Compute vertex normals
-        var normals = [SCNVector3](repeating: SCNVector3(0, 0, 0), count: fsVerts.count)
-        for face in allFaces {
-            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
-            let v0 = fsVerts[i0], v1 = fsVerts[i1], v2 = fsVerts[i2]
-            let nx = (v1.y - v0.y) * (v2.z - v0.z) - (v1.z - v0.z) * (v2.y - v0.y)
-            let ny = (v1.z - v0.z) * (v2.x - v0.x) - (v1.x - v0.x) * (v2.z - v0.z)
-            let nz = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
-            for idx in [i0, i1, i2] {
-                normals[idx] = SCNVector3(normals[idx].x + nx, normals[idx].y + ny, normals[idx].z + nz)
-            }
-        }
-        for i in 0..<normals.count {
-            let n = normals[i]
-            let len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z)
-            if len > 0 { normals[i] = SCNVector3(n.x / len, n.y / len, n.z / len) }
-        }
+        // Compute vertex normals on decimated mesh
+        let normalsSimd = computeVertexNormals(vertices: allVerts, faces: allFaces)
+        let normals: [SCNVector3] = normalsSimd.map { SCNVector3($0.x, $0.y, $0.z) }
 
-        // Build multi-element SCNGeometry (one element per electrode region)
+        // Store reusable geometry sources
         let vertexSource = SCNGeometrySource(vertices: fsVerts)
         let normalSource = SCNGeometrySource(normals: normals)
 
-        var elements: [SCNGeometryElement] = []
-        var materials: [SCNMaterial] = []
-        var materialMap: [String: SCNMaterial] = [:]
-
-        for (ei, info) in electrodeInfo.enumerated() {
-            let regionFaceIndices = facesPerElectrode[ei]
-            guard !regionFaceIndices.isEmpty else { continue }
-
-            var indices = [UInt32]()
-            indices.reserveCapacity(regionFaceIndices.count * 3)
-            for fi in regionFaceIndices {
-                let face = allFaces[fi]
-                indices.append(face.0)
-                indices.append(face.1)
-                indices.append(face.2)
-            }
-
-            let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
-            elements.append(element)
-
-            // Emissive material — visible at rest, lights up dramatically with activity
-            let mat = SCNMaterial()
-            mat.lightingModel = .constant
-            mat.diffuse.contents = UIColor.clear
-            mat.emission.contents = UIColor(red: 0.12, green: 0.12, blue: 0.20, alpha: 1.0)
-            mat.emission.intensity = 0.5
-            mat.transparency = 0.40
-            mat.blendMode = .add
-            mat.isDoubleSided = true
-            mat.writesToDepthBuffer = false
-            materials.append(mat)
-            materialMap[info.name] = mat
+        var flatIndices = [UInt32]()
+        flatIndices.reserveCapacity(allFaces.count * 3)
+        for face in allFaces {
+            flatIndices.append(face.0)
+            flatIndices.append(face.1)
+            flatIndices.append(face.2)
         }
+        let faceData = flatIndices.withUnsafeBufferPointer { Data(buffer: $0) }
+        let faceElement = SCNGeometryElement(
+            data: faceData,
+            primitiveType: .triangles,
+            primitiveCount: allFaces.count,
+            bytesPerIndex: MemoryLayout<UInt32>.size
+        )
 
-        guard !elements.isEmpty else { return nil }
+        self.regionVertexSource = vertexSource
+        self.regionNormalSource = normalSource
+        self.regionFaceElement = faceElement
+        self.regionVertexCount = fsVerts.count
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource], elements: elements)
-        geometry.materials = materials
+        // Initial geometry with dark vertex colors
+        let vertCount = fsVerts.count
+        var colorArray = [Float](repeating: 0, count: vertCount * 4)
+        for vi in 0..<vertCount {
+            colorArray[vi * 4 + 0] = 0.08
+            colorArray[vi * 4 + 1] = 0.08
+            colorArray[vi * 4 + 2] = 0.12
+            colorArray[vi * 4 + 3] = 1.0
+        }
+        let colorData = colorArray.withUnsafeBufferPointer { Data(buffer: $0) }
+        let colorSource = SCNGeometrySource(
+            data: colorData,
+            semantic: .color,
+            vectorCount: vertCount,
+            usesFloatComponents: true,
+            componentsPerVector: 4,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: MemoryLayout<Float>.size * 4
+        )
+
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource, colorSource], elements: [faceElement])
+        let mat = SCNMaterial()
+        mat.lightingModel = .constant
+        mat.diffuse.contents = UIColor.white
+        mat.shaderModifiers = [.surface: BrainView3D.vertexColorEmissionShader]
+        mat.transparency = CGFloat(regionOpacity)
+        mat.blendMode = .alpha
+        mat.isDoubleSided = true
+        mat.writesToDepthBuffer = false
+        geometry.materials = [mat]
 
         let meshNode = SCNNode(geometry: geometry)
-        meshNode.scale = SCNVector3(0.98, 0.98, 0.98)  // Slightly inside outer shell
+        meshNode.scale = SCNVector3(0.98, 0.98, 0.98)
 
         let containerNode = SCNNode()
         containerNode.addChildNode(meshNode)
         applyBrainTransform(to: containerNode)
 
-        return (containerNode, materialMap)
+        self.regionMeshNode = meshNode
+
+        return containerNode
     }
 
     // MARK: - Geometry Data Extraction
@@ -543,7 +618,6 @@ struct BrainView3D: View {
     private func extractVertices(from geometry: SCNGeometry) -> [simd_float3] {
         guard let source = geometry.sources(for: .vertex).first else { return [] }
 
-        // Issue 6 fix: verify vertex data is Float32 (4 bytes per component, 3 components)
         guard source.bytesPerComponent == 4, source.componentsPerVector >= 3 else {
             print("BrainView3D: unexpected vertex format — \(source.bytesPerComponent) bytes/component")
             return []
@@ -608,6 +682,111 @@ struct BrainView3D: View {
         return faces
     }
 
+    // MARK: - Mesh Decimation (Vertex Clustering)
+
+    /// Reduces vertex count via grid-based vertex clustering.
+    /// Divides bounding box into a 3D grid, merges all vertices in each cell to their average,
+    /// and remaps face indices (removing degenerate triangles where 2+ vertices collapsed).
+    private func decimateMesh(
+        vertices: [simd_float3],
+        faces: [(UInt32, UInt32, UInt32)],
+        targetVertexCount: Int
+    ) -> (vertices: [simd_float3], faces: [(UInt32, UInt32, UInt32)]) {
+        guard vertices.count > targetVertexCount, !vertices.isEmpty else {
+            return (vertices, faces)
+        }
+
+        // Compute bounding box
+        var minB = vertices[0], maxB = vertices[0]
+        for v in vertices {
+            minB = simd_min(minB, v)
+            maxB = simd_max(maxB, v)
+        }
+
+        // Approximate surface area from face triangles for accurate cell sizing.
+        // A brain mesh is a 2D manifold in 3D space — volume-based cellSize would
+        // be wrong because vertices lie on the surface, not throughout the volume.
+        var surfaceArea: Float = 0
+        for face in faces {
+            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
+            guard i0 < vertices.count, i1 < vertices.count, i2 < vertices.count else { continue }
+            let cross = simd_cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0])
+            surfaceArea += simd_length(cross) * 0.5
+        }
+        let cellSize = sqrtf(max(surfaceArea, 0.001) / Float(targetVertexCount))
+
+        // Map each vertex to a grid cell
+        var cellMap: [GridCell: [Int]] = [:]
+        cellMap.reserveCapacity(targetVertexCount)
+        var vertexCellKey = [GridCell]()
+        vertexCellKey.reserveCapacity(vertices.count)
+
+        for (i, v) in vertices.enumerated() {
+            let cell = GridCell(
+                x: Int32(floorf((v.x - minB.x) / cellSize)),
+                y: Int32(floorf((v.y - minB.y) / cellSize)),
+                z: Int32(floorf((v.z - minB.z) / cellSize))
+            )
+            cellMap[cell, default: []].append(i)
+            vertexCellKey.append(cell)
+        }
+
+        // Average vertices per cell → new vertex positions
+        var cellToNewIdx: [GridCell: UInt32] = [:]
+        cellToNewIdx.reserveCapacity(cellMap.count)
+        var newVerts = [simd_float3]()
+        newVerts.reserveCapacity(cellMap.count)
+
+        for (cell, indices) in cellMap {
+            cellToNewIdx[cell] = UInt32(newVerts.count)
+            var sum = simd_float3(0, 0, 0)
+            for i in indices { sum += vertices[i] }
+            newVerts.append(sum / Float(indices.count))
+        }
+
+        // Remap face indices, skip degenerate triangles
+        var newFaces = [(UInt32, UInt32, UInt32)]()
+        newFaces.reserveCapacity(faces.count)
+        let vertCount = vertexCellKey.count
+        for face in faces {
+            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
+            guard i0 < vertCount, i1 < vertCount, i2 < vertCount else { continue }
+            let c0 = vertexCellKey[i0]
+            let c1 = vertexCellKey[i1]
+            let c2 = vertexCellKey[i2]
+            guard let n0 = cellToNewIdx[c0],
+                  let n1 = cellToNewIdx[c1],
+                  let n2 = cellToNewIdx[c2] else { continue }
+            // Skip degenerate: two or more vertices collapsed to same cell
+            if n0 != n1 && n1 != n2 && n0 != n2 {
+                newFaces.append((n0, n1, n2))
+            }
+        }
+
+        return (newVerts, newFaces)
+    }
+
+    /// Compute per-vertex normals from face normals (area-weighted average).
+    private func computeVertexNormals(
+        vertices: [simd_float3],
+        faces: [(UInt32, UInt32, UInt32)]
+    ) -> [simd_float3] {
+        var normals = [simd_float3](repeating: .zero, count: vertices.count)
+        for face in faces {
+            let i0 = Int(face.0), i1 = Int(face.1), i2 = Int(face.2)
+            guard i0 < vertices.count, i1 < vertices.count, i2 < vertices.count else { continue }
+            let v0 = vertices[i0], v1 = vertices[i1], v2 = vertices[i2]
+            let faceNormal = simd_cross(v1 - v0, v2 - v0)
+            normals[i0] += faceNormal
+            normals[i1] += faceNormal
+            normals[i2] += faceNormal
+        }
+        return normals.map { n in
+            let len = simd_length(n)
+            return len > 0 ? n / len : simd_float3(0, 1, 0)
+        }
+    }
+
     // MARK: - Brain Coordinate Transform
 
     private func applyBrainTransform(to node: SCNNode) {
@@ -631,14 +810,10 @@ struct BrainView3D: View {
         let sphere = SCNSphere(radius: 0.38)
         sphere.segmentCount = 64
         let material = SCNMaterial()
-        material.lightingModel = .physicallyBased
-        material.diffuse.contents = UIColor(red: 0.7, green: 0.75, blue: 0.85, alpha: 0.06)
-        material.metalness.contents = NSNumber(value: 0.15)
-        material.roughness.contents = NSNumber(value: 0.05)
-        material.transparency = 0.05
-        material.transparencyMode = .dualLayer
+        material.lightingModel = .constant
+        material.diffuse.contents = UIColor.clear
         material.isDoubleSided = true
-        material.blendMode = .add
+        material.blendMode = .alpha
         material.writesToDepthBuffer = false
         material.shaderModifiers = [.fragment: BrainView3D.fresnelShader]
         sphere.materials = [material]
@@ -674,8 +849,8 @@ struct BrainView3D: View {
         let mat = SCNMaterial()
         mat.diffuse.contents = UIColor.clear
         mat.emission.contents = UIColor(red: 0.75, green: 0.60, blue: 0.20, alpha: 1.0)
-        mat.emission.intensity = 0.35
-        mat.transparency = 0.30
+        mat.emission.intensity = 0.25
+        mat.transparency = 0.25
         mat.blendMode = .add
         mat.isDoubleSided = true
         mat.writesToDepthBuffer = false
@@ -692,49 +867,6 @@ struct BrainView3D: View {
         return node
     }
 
-    // MARK: - Surface Markers
-
-    private func addSurfaceMarkers(to parent: SCNNode) {
-        for ch in edfData.eegChannelNames {
-            guard let pos2D = Constants.electrodePositions2D[ch] else { continue }
-            let pos3D = project2Dto3D(x: pos2D.x, y: pos2D.y, depth: 0.95)
-            let dotGeom = SCNSphere(radius: 0.010)
-            dotGeom.segmentCount = 12
-            let dotMat = SCNMaterial()
-            dotMat.diffuse.contents = UIColor(white: 0.15, alpha: 1.0)
-            dotMat.emission.contents = UIColor(red: 0.3, green: 0.4, blue: 0.6, alpha: 1.0)
-            dotMat.emission.intensity = 0.4
-            dotMat.writesToDepthBuffer = false
-            dotGeom.materials = [dotMat]
-            let dotNode = SCNNode(geometry: dotGeom)
-            dotNode.position = pos3D
-            parent.addChildNode(dotNode)
-        }
-    }
-
-    // MARK: - Particle System
-
-    private func addParticleSystem(to parent: SCNNode) {
-        let particles = SCNParticleSystem()
-        particles.birthRate = 30
-        particles.particleLifeSpan = 2.5
-        particles.particleSize = 0.003
-        particles.particleSizeVariation = 0.002
-        particles.particleColor = UIColor(red: 0.3, green: 0.5, blue: 1.0, alpha: 0.4)
-        particles.particleColorVariation = SCNVector4(0.1, 0.15, 0.2, 0.0)
-        particles.blendMode = .additive
-        particles.emitterShape = SCNSphere(radius: 0.28)
-        particles.birthLocation = .volume
-        particles.particleVelocity = 0.003
-        particles.particleVelocityVariation = 0.002
-        particles.spreadingAngle = 180
-        particles.isAffectedByGravity = false
-        let emitterNode = SCNNode()
-        emitterNode.position = SCNVector3(0, 0.05, 0)
-        emitterNode.addParticleSystem(particles)
-        parent.addChildNode(emitterNode)
-    }
-
     // MARK: - 2D to 3D Projection
 
     private func project2Dto3D(x: Float, y: Float, depth: Float = 0.95) -> SCNVector3 {
@@ -749,12 +881,17 @@ struct BrainView3D: View {
         return SCNVector3(x3D, y3D, z3D)
     }
 
-    // MARK: - Color Update
+    // MARK: - Color Update (per-vertex blended)
 
     private func updateColors() {
         let channels = edfData.eegChannelNames
         let bandKey = selectedBand.rawValue
         guard let powerData = bandPowerData[bandKey], !epochTimes.isEmpty else { return }
+        guard regionVertexCount > 0,
+              let meshNode = regionMeshNode,
+              let vertexSource = regionVertexSource,
+              let normalSource = regionNormalSource,
+              let faceElement = regionFaceElement else { return }
 
         var epochIdx = 0
         for (i, t) in epochTimes.enumerated() {
@@ -778,19 +915,75 @@ struct BrainView3D: View {
             ? values.map { ($0 - mean) / std }
             : [Float](repeating: 0, count: values.count)
 
-        // Update each brain region's material
+        // Per-electrode colors from Z-scores
+        var channelIndexMap = [String: Int]()
         for (chIdx, ch) in channels.enumerated() {
-            guard chIdx < zscores.count, let mat = regionMaterials[ch] else { continue }
-            let zscore = zscores[chIdx]
-            let pos = ColorMap.zscoreToPosition(zscore)
-            let (r, g, b) = ColorMap.neuroSynchronyRGB(at: pos)
-            let color = UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: 1.0)
-            let absZ = min(abs(zscore), 3.0)
-
-            mat.emission.contents = color
-            mat.emission.intensity = CGFloat(0.3 + absZ * 1.2)
-            mat.transparency = CGFloat(0.25 + absZ * 0.20)
+            channelIndexMap[ch] = chIdx
         }
+
+        var electrodeColors = [(r: Float, g: Float, b: Float)]()
+        electrodeColors.reserveCapacity(electrodeNames.count)
+        for name in electrodeNames {
+            if let chIdx = channelIndexMap[name], chIdx < zscores.count {
+                let zscore = zscores[chIdx]
+                let pos = ColorMap.zscoreToPosition(zscore)
+                let (r, g, b) = ColorMap.neuroSynchronyRGB(at: pos)
+                let absZ = min(abs(zscore), 3.0)
+                let intensity: Float = 0.3 + absZ * 0.7
+                electrodeColors.append((r * intensity, g * intensity, b * intensity))
+            } else {
+                electrodeColors.append((0.08, 0.08, 0.12))
+            }
+        }
+
+        // Blend per-vertex colors using precomputed weights
+        let vertCount = regionVertexCount
+        var colorArray = [Float](repeating: 0, count: vertCount * 4)
+        let bright = regionBrightness
+
+        for vi in 0..<vertCount {
+            var r: Float = 0, g: Float = 0, b: Float = 0
+            for (eIdx, weight) in vertexBlendWeights[vi] {
+                guard eIdx < electrodeColors.count else { continue }
+                let c = electrodeColors[eIdx]
+                r += c.r * weight
+                g += c.g * weight
+                b += c.b * weight
+            }
+            colorArray[vi * 4 + 0] = min(r * bright, 1.0)
+            colorArray[vi * 4 + 1] = min(g * bright, 1.0)
+            colorArray[vi * 4 + 2] = min(b * bright, 1.0)
+            colorArray[vi * 4 + 3] = 1.0
+        }
+
+        // Build new color source (reuse stored vertex/normal/face data)
+        let colorData = colorArray.withUnsafeBufferPointer { Data(buffer: $0) }
+        let colorSource = SCNGeometrySource(
+            data: colorData,
+            semantic: .color,
+            vectorCount: vertCount,
+            usesFloatComponents: true,
+            componentsPerVector: 4,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: MemoryLayout<Float>.size * 4
+        )
+
+        let geometry = SCNGeometry(
+            sources: [vertexSource, normalSource, colorSource],
+            elements: [faceElement]
+        )
+        let mat = SCNMaterial()
+        mat.lightingModel = .constant
+        mat.diffuse.contents = UIColor.white
+        mat.shaderModifiers = [.surface: BrainView3D.vertexColorEmissionShader]
+        mat.transparency = CGFloat(regionOpacity)
+        mat.blendMode = .alpha
+        mat.isDoubleSided = true
+        mat.writesToDepthBuffer = false
+        geometry.materials = [mat]
+
+        meshNode.geometry = geometry
     }
 
     // MARK: - Playback

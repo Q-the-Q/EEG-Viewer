@@ -124,16 +124,24 @@ struct SignalProcessor {
             var imagPart = [Float](repeating: 0, count: nperseg / 2)
 
             // Pack into split complex
-            windowed.withUnsafeBufferPointer { buf in
-                buf.baseAddress!.withMemoryRebound(to: Float.self, capacity: nperseg) { ptr in
-                    var splitComplex = DSPSplitComplex(realp: &realPart, imagp: &imagPart)
-                    vDSP_ctoz(UnsafePointer<DSPComplex>(OpaquePointer(ptr)), 2,
-                              &splitComplex, 1, vDSP_Length(nperseg / 2))
+            realPart.withUnsafeMutableBufferPointer { realBuf in
+                imagPart.withUnsafeMutableBufferPointer { imagBuf in
+                    var splitComplex = DSPSplitComplex(realp: realBuf.baseAddress!,
+                                                       imagp: imagBuf.baseAddress!)
+                    windowed.withUnsafeBufferPointer { buf in
+                        buf.baseAddress!.withMemoryRebound(to: Float.self, capacity: nperseg) { ptr in
+                            vDSP_ctoz(UnsafePointer<DSPComplex>(OpaquePointer(ptr)), 2,
+                                      &splitComplex, 1, vDSP_Length(nperseg / 2))
+                        }
+                    }
                     vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(kFFTDirection_Forward))
                 }
             }
 
-            // Compute magnitude squared
+            // Compute magnitude squared.
+            // Safe to read realPart/imagPart here: withUnsafeMutableBufferPointer closures
+            // above mutated the backing storage in-place via splitComplex pointers, and
+            // reading after closure exit is valid — the array storage is not invalidated.
             var magnitudes = [Float](repeating: 0, count: nFreqs)
 
             // DC component
@@ -496,11 +504,16 @@ struct SignalProcessor {
         var realPart = [Float](repeating: 0, count: halfN)
         var imagPart = [Float](repeating: 0, count: halfN)
 
-        input.withUnsafeBufferPointer { buf in
-            buf.baseAddress!.withMemoryRebound(to: Float.self, capacity: n) { ptr in
-                var split = DSPSplitComplex(realp: &realPart, imagp: &imagPart)
-                vDSP_ctoz(UnsafePointer<DSPComplex>(OpaquePointer(ptr)), 2,
-                          &split, 1, vDSP_Length(halfN))
+        realPart.withUnsafeMutableBufferPointer { realBuf in
+            imagPart.withUnsafeMutableBufferPointer { imagBuf in
+                var split = DSPSplitComplex(realp: realBuf.baseAddress!,
+                                             imagp: imagBuf.baseAddress!)
+                input.withUnsafeBufferPointer { buf in
+                    buf.baseAddress!.withMemoryRebound(to: Float.self, capacity: n) { ptr in
+                        vDSP_ctoz(UnsafePointer<DSPComplex>(OpaquePointer(ptr)), 2,
+                                  &split, 1, vDSP_Length(halfN))
+                    }
+                }
                 vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(kFFTDirection_Forward))
             }
         }
