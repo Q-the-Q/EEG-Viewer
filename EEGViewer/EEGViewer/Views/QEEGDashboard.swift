@@ -494,14 +494,20 @@ struct QEEGDashboard: View {
         // Write PDF to temp file so share sheet shows proper filename and type
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("qEEG_Report.pdf")
-        try? data.write(to: tempURL)
+        do {
+            try data.write(to: tempURL)
+        } catch {
+            print("PDFExport: failed to write temp file — \(error.localizedDescription)")
+            return
+        }
 
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let rootVC = windowScene.windows.first?.rootViewController else { return }
+              let rootVC = windowScene.keyWindow?.rootViewController else { return }
 
-        // Walk to the topmost presented controller (in case of existing sheets)
+        // Walk to the topmost presented controller, skipping any mid-dismissal controllers
         var presenter = rootVC
-        while let presented = presenter.presentedViewController {
+        while let presented = presenter.presentedViewController,
+              !presented.isBeingDismissed {
             presenter = presented
         }
 

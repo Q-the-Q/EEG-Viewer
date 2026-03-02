@@ -66,7 +66,8 @@ struct PDFExporter {
                         for item in pairs { maxAbs = max(maxAbs, abs(item.value)) }
                     }
                 }
-                sharedAsymRanges[band.name] = maxAbs + 0.05
+                // Floor at 0.3 to avoid collapsed axis when all values are near zero
+                sharedAsymRanges[band.name] = max(maxAbs + 0.05, 0.3)
             }
         }
 
