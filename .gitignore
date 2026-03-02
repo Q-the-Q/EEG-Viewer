@@ -19,6 +19,11 @@ __pycache__/
 .vscode/
 .idea/
 
+# Xcode user data
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/
+
 # Claude Code
 .claude/
 

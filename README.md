@@ -37,8 +37,8 @@ Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerat
   - **Hemispheric Asymmetry**: bar charts showing ln(Right) − ln(Left) for 8 homologous pairs, with shared band picker
   - **Peak Frequency Table**: alpha peak and dominant frequency per channel
 - **Multi-EDF Comparison**: compare up to 3 EDF recordings side-by-side (1 primary + 2 comparisons) with synchronized band selection and shared spectra Y-axis
-- **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage)
-- **3D Brain View**: interactive SceneKit visualization of electrode positions on a brain model
+- **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared asymmetry axis ranges across recordings for consistent visual comparison. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage). Works on iPad and when running the iPad app on Mac.
+- **3D Brain Visualization**: interactive SceneKit brain model with per-vertex electrode color blending (inverse-distance-squared weighting from 3 nearest electrodes), real-time Z-score heatmap updates, mesh decimation (~300k→40k vertices inner, ~150k→12k outer), Fresnel edge-glow shader on translucent outer shell, and async mesh loading for responsive startup
 - **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording
 
 ---
