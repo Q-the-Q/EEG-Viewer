@@ -60,7 +60,6 @@ struct QEEGDashboard: View {
     @StateObject private var comparisonManager = ComparisonManager()
     @State private var showComparisonPicker = false
     @State private var comparisonError: String?
-    @State private var showShareSheet = false
     @State private var pdfData: Data?
     @State private var isExporting = false
     @State private var selectedCoherenceBand: String = "Alpha"
@@ -109,11 +108,6 @@ struct QEEGDashboard: View {
             Button("OK") { comparisonError = nil }
         } message: {
             Text(comparisonError ?? "")
-        }
-        .sheet(isPresented: $showShareSheet) {
-            if let pdfData {
-                ShareSheet(items: [pdfData])
-            }
         }
     }
 
@@ -489,19 +483,51 @@ struct QEEGDashboard: View {
             let pdf = PDFExporter.generateReport(allResults: pdfResults, edfData: data)
             self.pdfData = pdf
             self.isExporting = false
-            self.showShareSheet = true
+            presentShareSheet(data: pdf)
         }
     }
-}
 
-// MARK: - Share Sheet
+    /// Present UIActivityViewController directly with proper popover configuration.
+    /// Using .sheet() with UIActivityViewController crashes on iPad/Mac because
+    /// it requires a popover source rect that .sheet() doesn't provide.
+    private func presentShareSheet(data: Data) {
+        // Write PDF to temp file so share sheet shows proper filename and type
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qEEG_Report.pdf")
+        do {
+            try data.write(to: tempURL)
+        } catch {
+            print("PDFExport: failed to write temp file — \(error.localizedDescription)")
+            return
+        }
 
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = windowScene.keyWindow?.rootViewController else { return }
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        // Walk to the topmost presented controller, skipping any mid-dismissal controllers
+        var presenter = rootVC
+        while let presented = presenter.presentedViewController,
+              !presented.isBeingDismissed {
+            presenter = presented
+        }
+
+        let activityVC = UIActivityViewController(
+            activityItems: [tempURL],
+            applicationActivities: nil
+        )
+
+        // iPad and Mac require popover source — center of screen with no arrow
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(
+                x: presenter.view.bounds.midX,
+                y: presenter.view.bounds.midY,
+                width: 0, height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+
+        presenter.present(activityVC, animated: true)
     }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+

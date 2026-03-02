@@ -54,6 +54,23 @@ struct PDFExporter {
         }
         let sharedMaxY = globalPeak + 0.2
 
+        // Compute shared asymmetry range per band across all recordings.
+        // When multiple recordings are compared, each band's charts share a
+        // symmetric x-axis so visual comparison is meaningful.
+        var sharedAsymRanges: [String: Float] = [:]
+        if allResults.count > 1 {
+            for band in Constants.freqBands {
+                var maxAbs: Float = 0
+                for entry in allResults {
+                    if let pairs = entry.results.asymmetry[band.name] {
+                        for item in pairs { maxAbs = max(maxAbs, abs(item.value)) }
+                    }
+                }
+                // Floor at 0.3 to avoid collapsed axis when all values are near zero
+                sharedAsymRanges[band.name] = max(maxAbs + 0.05, 0.3)
+            }
+        }
+
         let recordings = allResults.map { entry in
             // Render coherence and asymmetry for ALL 4 bands
             var cohImages = [BandImage]()
@@ -63,7 +80,8 @@ struct PDFExporter {
                 if let img = renderCoherenceImage(results: entry.results, band: band.name) {
                     cohImages.append(BandImage(bandName: band.name, freqRange: range, image: img))
                 }
-                if let img = renderAsymmetryImage(results: entry.results, band: band.name) {
+                if let img = renderAsymmetryImage(results: entry.results, band: band.name,
+                                                   sharedRange: sharedAsymRanges[band.name]) {
                     asymImages.append(BandImage(bandName: band.name, freqRange: range, image: img))
                 }
             }
@@ -517,8 +535,10 @@ struct PDFExporter {
     }
 
     @MainActor
-    private static func renderAsymmetryImage(results: QEEGResults, band: String) -> UIImage? {
-        let view = AsymmetryChartView(results: results, selectedBand: band)
+    private static func renderAsymmetryImage(results: QEEGResults, band: String,
+                                              sharedRange: Float? = nil) -> UIImage? {
+        let view = AsymmetryChartView(results: results, selectedBand: band,
+                                       sharedRange: sharedRange)
             .frame(width: 300, height: 280)
             .background(Color.white)
             .environment(\.colorScheme, .light)
