@@ -1,6 +1,5 @@
 """Topographic head maps for qEEG relative power Z-scores.
 
-Matches the NeuroSynchrony PDF report colormap:
 - +2.5Z (top): light yellow
 - through orange, red, magenta
 - 0Z (center): black
@@ -19,11 +18,10 @@ import mne
 from ..utils.constants import FREQ_BANDS, ZSCORE_VMIN, ZSCORE_VMAX
 
 
-# Custom colormap matching the NeuroSynchrony PDF colorbar.
 # Reading from bottom (-2.5Z) to top (+2.5Z):
 #   cyan -> light blue -> blue -> dark blue -> BLACK -> magenta -> red -> orange -> yellow
 ZSCORE_CMAP = LinearSegmentedColormap.from_list(
-    "neurosynchrony",
+    "eeg_colormap",
     [
         (0.00, "#00FFFF"),   # -2.5Z: cyan
         (0.10, "#00CCEE"),   # light cyan-blue

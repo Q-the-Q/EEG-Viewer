@@ -36,9 +36,9 @@ ELECTRODE_POS_2D = {
     "O2":  (0.029843, -0.112156),
 }
 
-# NeuroSynchrony colormap: cyan -> blue -> dark blue -> BLACK -> magenta -> red -> yellow
+# Colormap: cyan -> blue -> dark blue -> BLACK -> magenta -> red -> yellow
 ZSCORE_CMAP = LinearSegmentedColormap.from_list(
-    "neurosynchrony",
+    "eeg_colormap",
     [
         (0.00, "#00FFFF"),   # -2.5Z: cyan
         (0.10, "#00CCEE"),
@@ -84,7 +84,7 @@ def plot_topomap(data, channel_names, ax=None, cmap=None, vmin=-2.5, vmax=2.5,
         data: 1D array of values (one per channel), e.g. Z-scores.
         channel_names: List of channel names matching data order.
         ax: Matplotlib axes to plot on. Created if None.
-        cmap: Colormap (default: NeuroSynchrony).
+        cmap: Colormap (default: EEG diverging colormap).
         vmin, vmax: Color scale limits.
         resolution: Grid resolution for interpolation.
         show_head: Draw head outline, nose, ears.

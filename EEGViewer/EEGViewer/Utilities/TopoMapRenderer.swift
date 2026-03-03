@@ -80,7 +80,7 @@ struct TopoMapRenderer {
 
                 // Map to colormap
                 let position = ColorMap.zscoreToPosition(interpolated)
-                let (r, g, b) = ColorMap.neuroSynchronyRGB(at: position)
+                let (r, g, b) = ColorMap.eegColorMapRGB(at: position)
 
                 let offset = (py * gridSize + px) * bytesPerPixel
                 pixelData[offset] = UInt8(min(255, max(0, r * 255)))

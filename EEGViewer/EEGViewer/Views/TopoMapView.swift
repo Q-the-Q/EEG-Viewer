@@ -48,7 +48,7 @@ struct TopoColorBar: View {
                     let steps = Int(size.height)
                     for y in 0..<steps {
                         let position = 1.0 - Float(y) / Float(steps)
-                        let color = ColorMap.neuroSynchrony(at: position)
+                        let color = ColorMap.eegColorMap(at: position)
                         context.fill(
                             Path(CGRect(x: 0, y: CGFloat(y), width: size.width, height: 2)),
                             with: .color(color)

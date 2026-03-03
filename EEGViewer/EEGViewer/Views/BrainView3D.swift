@@ -927,7 +927,7 @@ struct BrainView3D: View {
             if let chIdx = channelIndexMap[name], chIdx < zscores.count {
                 let zscore = zscores[chIdx]
                 let pos = ColorMap.zscoreToPosition(zscore)
-                let (r, g, b) = ColorMap.neuroSynchronyRGB(at: pos)
+                let (r, g, b) = ColorMap.eegColorMapRGB(at: pos)
                 let absZ = min(abs(zscore), 3.0)
                 let intensity: Float = 0.3 + absZ * 0.7
                 electrodeColors.append((r * intensity, g * intensity, b * intensity))

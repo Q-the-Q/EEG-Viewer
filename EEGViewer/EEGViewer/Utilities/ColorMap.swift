@@ -1,15 +1,15 @@
 // ColorMap.swift
-// NeuroSynchrony-style diverging colormap and Viridis-like colormap for spectrograms.
+// Diverging colormap and Viridis-like colormap for spectrograms.
 
 import SwiftUI
 
 struct ColorMap {
 
-    /// Interpolate the NeuroSynchrony colormap at a normalized position (0-1).
+    /// Interpolate the colormap at a normalized position (0-1).
     /// Maps Z-scores: -2.5 (cyan) → 0 (black) → +2.5 (yellow).
-    static func neuroSynchrony(at position: Float) -> Color {
+    static func eegColorMap(at position: Float) -> Color {
         let t = max(0, min(1, position))
-        let stops = Constants.neuroSynchronyStops
+        let stops = Constants.eegColorMapStops
 
         // Find surrounding stops
         var lower = stops[0]
@@ -37,10 +37,10 @@ struct ColorMap {
         return (zscore - Constants.zscoreMin) / (Constants.zscoreMax - Constants.zscoreMin)
     }
 
-    /// Get RGB components for NeuroSynchrony at a position (0-1).
-    static func neuroSynchronyRGB(at position: Float) -> (r: Float, g: Float, b: Float) {
+    /// Get RGB components at a position (0-1).
+    static func eegColorMapRGB(at position: Float) -> (r: Float, g: Float, b: Float) {
         let t = max(0, min(1, position))
-        let stops = Constants.neuroSynchronyStops
+        let stops = Constants.eegColorMapStops
 
         var lower = stops[0]
         var upper = stops[stops.count - 1]

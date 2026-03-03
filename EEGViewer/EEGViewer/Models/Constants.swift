@@ -108,7 +108,7 @@ enum Constants {
 
     static let headRadius: Float = 0.095
 
-    // MARK: - NeuroSynchrony Colormap Stops
+    // MARK: - Colormap Stops
     // cyan → blue → black → magenta → red → yellow
 
     struct ColorStop {
@@ -118,7 +118,7 @@ enum Constants {
         let b: Float
     }
 
-    static let neuroSynchronyStops: [ColorStop] = [
+    static let eegColorMapStops: [ColorStop] = [
         ColorStop(position: 0.0,   r: 0.0,   g: 1.0,   b: 1.0),   // Cyan  (-2.5Z)
         ColorStop(position: 0.1,   r: 0.0,   g: 0.6,   b: 0.867), // Light blue
         ColorStop(position: 0.3,   r: 0.0,   g: 0.4,   b: 0.8),   // Blue

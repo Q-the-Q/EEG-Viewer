@@ -506,7 +506,7 @@ struct PDFExporter {
             let steps = 50
             for i in 0..<steps {
                 let pos = 1.0 - Float(i) / Float(steps - 1)
-                let (r, g, b) = ColorMap.neuroSynchronyRGB(at: pos)
+                let (r, g, b) = ColorMap.eegColorMapRGB(at: pos)
                 UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: 1).setFill()
                 let stepHeight = barHeight / CGFloat(steps)
                 UIBezierPath(rect: CGRect(x: barX, y: CGFloat(i) * stepHeight,

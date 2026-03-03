@@ -43,8 +43,8 @@ CHANNEL_SPACING_UV = 50.0  # microvolts between channel traces
 DEFAULT_AMPLITUDE_SCALE = 1.0
 
 # PSD computation
-# nperseg=1024 at 500 Hz gives 0.488 Hz resolution, matching the NeuroSynchrony
-# report's amplitude scale (e.g., ~4.3 µV Frontal max).
+# nperseg=1024 at 500 Hz gives 0.488 Hz resolution, matching clinical qEEG
+# report amplitude scales (e.g., ~4.3 µV Frontal max).
 # Higher nperseg concentrates low-frequency power and inflates the 1-2 Hz peak.
 PSD_NPERSEG = 1024
 PSD_NOVERLAP = 512
