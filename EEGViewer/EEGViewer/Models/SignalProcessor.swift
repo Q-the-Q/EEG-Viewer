@@ -103,6 +103,7 @@ struct SignalProcessor {
 
         let nFreqs = nperseg / 2 + 1
         var avgPSD = [Float](repeating: 0, count: nFreqs)
+        var processedSegments = 0
 
         for seg in 0..<nSegments {
             let startIdx = seg * step
@@ -160,10 +161,11 @@ struct SignalProcessor {
 
             // Accumulate
             vDSP_vadd(avgPSD, 1, magnitudes, 1, &avgPSD, 1, vDSP_Length(nFreqs))
+            processedSegments += 1
         }
 
         // Average and normalize to V²/Hz
-        let actualSegments = Float(nSegments)
+        let actualSegments = Float(max(1, processedSegments))
         let scale = 1.0 / (actualSegments * sfreq * windowPower)
         var scaledPSD = [Float](repeating: 0, count: nFreqs)
         var s = scale

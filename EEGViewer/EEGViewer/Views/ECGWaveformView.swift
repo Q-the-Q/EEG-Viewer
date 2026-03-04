@@ -11,9 +11,19 @@ struct ECGWaveformView: View {
     let rPeakIndices: [Int]
     var isInverted: Bool = false
 
-    /// Display signal — flipped if ECG was detected as inverted so R-peaks point up
-    private var displaySignal: [Float] {
-        isInverted ? ecgSignal.map { -$0 } : ecgSignal
+    /// Display signal — cached once; flipped if ECG was detected as inverted so R-peaks point up.
+    /// Using a stored property avoids heap-allocating a full copy on every Canvas redraw.
+    private let _displaySignal: [Float]?
+
+    /// Safe accessor that falls back to ecgSignal if not pre-computed
+    var displaySignal: [Float] { _displaySignal ?? ecgSignal }
+
+    init(ecgSignal: [Float], sfreq: Float, rPeakIndices: [Int], isInverted: Bool = false) {
+        self.ecgSignal = ecgSignal
+        self.sfreq = sfreq
+        self.rPeakIndices = rPeakIndices
+        self.isInverted = isInverted
+        self._displaySignal = isInverted ? ecgSignal.map { -$0 } : nil
     }
 
     @State private var currentTime: Float = 0
@@ -106,21 +116,23 @@ struct ECGWaveformView: View {
 
         let totalSamples = endSample - startSample
 
-        // Grid lines (1-second intervals)
+        // Grid lines (1-second intervals) — guard against inverted range
         let startSec = Int(ceil(currentTime))
         let endSec = Int(floor(currentTime + windowSec))
-        for sec in startSec...endSec {
-            let x = leftMargin + CGFloat(Float(sec) - currentTime) / CGFloat(windowSec) * plotWidth
-            context.stroke(
-                Path { p in p.move(to: CGPoint(x: x, y: topMargin)); p.addLine(to: CGPoint(x: x, y: size.height - bottomMargin)) },
-                with: .color(Color.gray.opacity(0.15)),
-                lineWidth: 0.5
-            )
-            // Time label
-            context.draw(
-                Text("\(sec)s").font(.system(size: 9)).foregroundColor(.gray),
-                at: CGPoint(x: x, y: size.height - 2), anchor: .bottom
-            )
+        if startSec <= endSec {
+            for sec in startSec...endSec {
+                let x = leftMargin + CGFloat(Float(sec) - currentTime) / CGFloat(windowSec) * plotWidth
+                context.stroke(
+                    Path { p in p.move(to: CGPoint(x: x, y: topMargin)); p.addLine(to: CGPoint(x: x, y: size.height - bottomMargin)) },
+                    with: .color(Color.gray.opacity(0.15)),
+                    lineWidth: 0.5
+                )
+                // Time label
+                context.draw(
+                    Text("\(sec)s").font(.system(size: 9)).foregroundColor(.gray),
+                    at: CGPoint(x: x, y: size.height - 2), anchor: .bottom
+                )
+            }
         }
 
         // Zero line

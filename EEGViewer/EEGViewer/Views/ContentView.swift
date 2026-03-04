@@ -104,6 +104,7 @@ struct ContentView: View {
             self.analyzer.results = nil
             self.hrvAnalyzer.results = nil
             self.hrvAnalyzer.errorMessage = nil
+            self.hrvAnalyzer.isAnalyzing = false
             // New ID forces SwiftUI to recreate all tab views (resets @State, re-fires .onAppear)
             self.fileLoadID = UUID()
         } catch {

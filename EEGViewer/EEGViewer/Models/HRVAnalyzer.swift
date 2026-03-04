@@ -315,7 +315,12 @@ class HRVAnalyzer: ObservableObject {
                                     refinedIdx = j
                                 }
                             }
-                            insertions.append((index: i, peak: refinedIdx))
+                            // Verify refractory distance from neighboring peaks
+                            let tooCloseLeft = refinedIdx - peaks[i - 1] < refractorySamples
+                            let tooCloseRight = peaks[i] - refinedIdx < refractorySamples
+                            if !tooCloseLeft && !tooCloseRight {
+                                insertions.append((index: i, peak: refinedIdx))
+                            }
                         }
                     }
                 }
@@ -411,11 +416,14 @@ class HRVAnalyzer: ObservableObject {
         let meanHR = meanRR > 0 ? 60000.0 / meanRR : 0
 
         // SDNN: standard deviation of all NN intervals
+        // vDSP_normalize returns population stddev (divides by N); clinical SDNN uses
+        // sample stddev (divides by N-1), so apply Bessel's correction.
         var mean: Float = 0
         var sdnn: Float = 0
-        var variance: Float = 0
-        vDSP_normalize(rrIntervals, 1, nil, 1, &mean, &variance, vDSP_Length(count))
-        sdnn = variance  // vDSP_normalize returns std dev in the variance parameter
+        var popSD: Float = 0
+        vDSP_normalize(rrIntervals, 1, nil, 1, &mean, &popSD, vDSP_Length(count))
+        let n = Float(count)
+        sdnn = count > 1 ? popSD * sqrtf(n / (n - 1)) : popSD
 
         // Successive differences
         var diffs = [Float](repeating: 0, count: count - 1)
@@ -465,12 +473,14 @@ class HRVAnalyzer: ObservableObject {
         return PoincareResult(rrN: rrN, rrN1: rrN1, sd1: sd1, sd2: sd2)
     }
 
+    /// Sample standard deviation (Bessel-corrected, divides by N-1).
     nonisolated private static func stddev(_ arr: [Float]) -> Float {
         guard arr.count > 1 else { return 0 }
         var mean: Float = 0
-        var sd: Float = 0
-        vDSP_normalize(arr, 1, nil, 1, &mean, &sd, vDSP_Length(arr.count))
-        return sd
+        var popSD: Float = 0
+        vDSP_normalize(arr, 1, nil, 1, &mean, &popSD, vDSP_Length(arr.count))
+        let n = Float(arr.count)
+        return popSD * sqrtf(n / (n - 1))
     }
 
     // MARK: - Frequency-Domain HRV

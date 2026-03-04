@@ -549,29 +549,41 @@ struct PoincareChartView: View {
         let y: Float
     }
 
-    /// Mean RR for the ellipse center
+    /// Mean of RR[n] series (precise center for the Poincaré ellipse).
     private var meanRR: Float {
-        guard !results.rrIntervals.isEmpty else { return 0 }
-        return results.rrIntervals.reduce(0, +) / Float(results.rrIntervals.count)
+        guard !results.rrN.isEmpty else { return 0 }
+        return results.rrN.reduce(0, +) / Float(results.rrN.count)
     }
 
-    /// Check if a point falls inside the SD1/SD2 ellipse
-    private func isInsideEllipse(_ rrN: Float, _ rrN1: Float) -> Bool {
-        guard results.sd1 > 0, results.sd2 > 0 else { return true }
-        let dx = rrN - meanRR
-        let dy = rrN1 - meanRR
-        // Rotate by -45° to align with ellipse principal axes
+    /// Pre-computed analysis: data points with inside/outside classification and counts.
+    /// Computed once per results change, avoiding repeated O(N) reduce calls.
+    private var analysis: (points: [PoinPoint], insideCount: Int) {
+        let center = meanRR
+        let sd1 = results.sd1
+        let sd2 = results.sd2
+        let canClassify = sd1 > 0 && sd2 > 0
         let sq2 = Float(2).squareRoot()
-        let rx = (dx + dy) / sq2   // along SD2 (major axis, identity line)
-        let ry = (-dx + dy) / sq2  // along SD1 (minor axis, perpendicular)
-        return (rx * rx) / (results.sd2 * results.sd2) + (ry * ry) / (results.sd1 * results.sd1) <= 1.0
+        let sd1sq = sd1 * sd1
+        let sd2sq = sd2 * sd2
+
+        var inside = 0
+        let points: [PoinPoint] = zip(results.rrN, results.rrN1).map { rrN, rrN1 in
+            var isInside = true
+            if canClassify {
+                let dx = rrN - center
+                let dy = rrN1 - center
+                let rx = (dx + dy) / sq2
+                let ry = (-dx + dy) / sq2
+                isInside = (rx * rx) / sd2sq + (ry * ry) / sd1sq <= 1.0
+            }
+            if isInside { inside += 1 }
+            return PoinPoint(rrN: rrN, rrN1: rrN1, inside: isInside)
+        }
+        return (points, inside)
     }
 
-    private var dataPoints: [PoinPoint] {
-        zip(results.rrN, results.rrN1).map { PoinPoint(rrN: $0, rrN1: $1, inside: isInsideEllipse($0, $1)) }
-    }
-
-    private var insideCount: Int { dataPoints.filter(\.inside).count }
+    private var dataPoints: [PoinPoint] { analysis.points }
+    private var insideCount: Int { analysis.insideCount }
     private var outsideCount: Int { dataPoints.count - insideCount }
     private var insidePercent: Float {
         guard !dataPoints.isEmpty else { return 0 }
