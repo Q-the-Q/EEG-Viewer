@@ -21,22 +21,29 @@ struct HRVMetricsCard: View {
             // Row 1: Primary metrics with arc gauges
             LazyVGrid(columns: columns, spacing: 12) {
                 gaugeCell("Mean HR", value: results.meanHR, unit: "BPM",
-                          format: "%.0f", rangeKey: "meanHR")
+                          format: "%.0f", rangeKey: "meanHR",
+                          info: MetricInfoContent.meanHR)
                 gaugeCell("SDNN", value: results.sdnn, unit: "ms",
-                          format: "%.1f", rangeKey: "sdnn")
+                          format: "%.1f", rangeKey: "sdnn",
+                          info: MetricInfoContent.sdnn)
                 gaugeCell("RMSSD", value: results.rmssd, unit: "ms",
-                          format: "%.1f", rangeKey: "rmssd")
+                          format: "%.1f", rangeKey: "rmssd",
+                          info: MetricInfoContent.rmssd)
                 gaugeCell("pNN50", value: results.pnn50, unit: "%",
-                          format: "%.1f", rangeKey: "pnn50")
+                          format: "%.1f", rangeKey: "pnn50",
+                          info: MetricInfoContent.pnn50)
             }
 
             // Row 2: Frequency-domain metrics with bar context
             LazyVGrid(columns: columns, spacing: 12) {
-                powerBalanceCell
+                powerBalanceCell(info: MetricInfoContent.ansBalance)
                 gaugeCell("LF/HF", value: results.lfHfRatio, unit: "ratio",
-                          format: "%.2f", rangeKey: "lfhf")
-                powerCell("LF Power", value: results.lfPower, color: .blue)
-                powerCell("HF Power", value: results.hfPower, color: .green)
+                          format: "%.2f", rangeKey: "lfhf",
+                          info: MetricInfoContent.lfHfRatio)
+                powerCell("LF Power", value: results.lfPower, color: .blue,
+                          info: MetricInfoContent.lfPower)
+                powerCell("HF Power", value: results.hfPower, color: .green,
+                          info: MetricInfoContent.hfPower)
             }
         }
     }
@@ -44,14 +51,20 @@ struct HRVMetricsCard: View {
     // MARK: - Gauge Cell (arc gauge + value + interpretation)
 
     private func gaugeCell(_ label: String, value: Float, unit: String,
-                           format: String, rangeKey: String) -> some View {
+                           format: String, rangeKey: String,
+                           info: MetricInfoContent.InfoItem? = nil) -> some View {
         let range = Constants.hrvRanges[rangeKey]
         let interpretation = interpretValue(value, range: range)
 
         return VStack(spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 2) {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let info = info {
+                    InfoButton(info: info)
+                }
+            }
 
             // Arc gauge
             ArcGaugeView(value: value, range: range)
@@ -79,14 +92,19 @@ struct HRVMetricsCard: View {
 
     // MARK: - Power Balance Cell (LF vs HF stacked bar)
 
-    private var powerBalanceCell: some View {
+    private func powerBalanceCell(info: MetricInfoContent.InfoItem? = nil) -> some View {
         let total = results.lfPower + results.hfPower
         let lfFrac = total > 0 ? CGFloat(results.lfPower / total) : 0.5
 
         return VStack(spacing: 4) {
-            Text("ANS Balance")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 2) {
+                Text("ANS Balance")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let info = info {
+                    InfoButton(info: info)
+                }
+            }
 
             // Stacked bar
             GeometryReader { geo in
@@ -132,14 +150,20 @@ struct HRVMetricsCard: View {
 
     // MARK: - Power Cell (simple value with magnitude bar)
 
-    private func powerCell(_ label: String, value: Float, color: Color) -> some View {
+    private func powerCell(_ label: String, value: Float, color: Color,
+                           info: MetricInfoContent.InfoItem? = nil) -> some View {
         let totalPower = results.totalPower
         let fraction = totalPower > 0 ? CGFloat(value / totalPower) : 0
 
         return VStack(spacing: 4) {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 2) {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let info = info {
+                    InfoButton(info: info)
+                }
+            }
 
             Text(formatPower(value))
                 .font(.system(.body, design: .rounded).monospacedDigit().bold())
@@ -539,8 +563,23 @@ struct PoincareChartView: View {
         let id = UUID()
         let rrN: Float
         let rrN1: Float
-        let inside: Bool
+        let zone: Int  // 1 = inside 1σ, 2 = 1σ–2σ, 3 = 2σ–3σ, 4 = outside 3σ
     }
+
+    /// Visual styles for each sigma level (rendered outermost-first for correct layering).
+    private struct SigmaLevel {
+        let multiplier: Float
+        let label: String
+        let opacity: Double
+        let lineWidth: CGFloat
+        let dash: [CGFloat]
+    }
+
+    private static let sigmaLevels: [SigmaLevel] = [
+        SigmaLevel(multiplier: 1, label: "1\u{03C3}", opacity: 0.9, lineWidth: 2.5, dash: []),
+        SigmaLevel(multiplier: 2, label: "2\u{03C3}", opacity: 0.5, lineWidth: 1.5, dash: [6, 4]),
+        SigmaLevel(multiplier: 3, label: "3\u{03C3}", opacity: 0.3, lineWidth: 1.0, dash: [3, 3]),
+    ]
 
     /// Ellipse point for plotting
     private struct EllipsePoint: Identifiable {
@@ -555,9 +594,18 @@ struct PoincareChartView: View {
         return results.rrN.reduce(0, +) / Float(results.rrN.count)
     }
 
-    /// Pre-computed analysis: data points with inside/outside classification and counts.
-    /// Computed once per results change, avoiding repeated O(N) reduce calls.
-    private var analysis: (points: [PoinPoint], insideCount: Int) {
+    /// Zone classification results for multi-sigma analysis.
+    private struct ZoneAnalysis {
+        let points: [PoinPoint]
+        let zone1Count: Int   // inside 1σ
+        let zone2Count: Int   // between 1σ and 2σ
+        let zone3Count: Int   // between 2σ and 3σ
+        let outsideCount: Int // outside 3σ
+    }
+
+    /// Pre-computed analysis: data points with 4-zone classification.
+    /// Uses normalized elliptical distance: d ≤ 1 → 1σ, d ≤ 4 → 2σ, d ≤ 9 → 3σ.
+    private var analysis: ZoneAnalysis {
         let center = meanRR
         let sd1 = results.sd1
         let sd2 = results.sd2
@@ -566,28 +614,42 @@ struct PoincareChartView: View {
         let sd1sq = sd1 * sd1
         let sd2sq = sd2 * sd2
 
-        var inside = 0
+        var z1 = 0, z2 = 0, z3 = 0, zOut = 0
         let points: [PoinPoint] = zip(results.rrN, results.rrN1).map { rrN, rrN1 in
-            var isInside = true
+            var zone = 1
             if canClassify {
                 let dx = rrN - center
                 let dy = rrN1 - center
                 let rx = (dx + dy) / sq2
                 let ry = (-dx + dy) / sq2
-                isInside = (rx * rx) / sd2sq + (ry * ry) / sd1sq <= 1.0
+                let d = (rx * rx) / sd2sq + (ry * ry) / sd1sq
+                if d <= 1.0 { zone = 1 }
+                else if d <= 4.0 { zone = 2 }
+                else if d <= 9.0 { zone = 3 }
+                else { zone = 4 }
             }
-            if isInside { inside += 1 }
-            return PoinPoint(rrN: rrN, rrN1: rrN1, inside: isInside)
+            switch zone {
+            case 1: z1 += 1
+            case 2: z2 += 1
+            case 3: z3 += 1
+            default: zOut += 1
+            }
+            return PoinPoint(rrN: rrN, rrN1: rrN1, zone: zone)
         }
-        return (points, inside)
+        return ZoneAnalysis(points: points, zone1Count: z1, zone2Count: z2,
+                            zone3Count: z3, outsideCount: zOut)
     }
 
     private var dataPoints: [PoinPoint] { analysis.points }
-    private var insideCount: Int { analysis.insideCount }
-    private var outsideCount: Int { dataPoints.count - insideCount }
-    private var insidePercent: Float {
-        guard !dataPoints.isEmpty else { return 0 }
-        return Float(insideCount) / Float(dataPoints.count) * 100
+
+    /// Color for each sigma zone.
+    private func zoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return Color.green.opacity(0.5)
+        case 2: return Color.yellow.opacity(0.6)
+        case 3: return Color.orange.opacity(0.7)
+        default: return Color.red.opacity(0.7)
+        }
     }
 
     /// Data-driven axis range so the scatter fills the plot area
@@ -598,8 +660,8 @@ struct PoincareChartView: View {
         return (lo - padding)...(hi + padding)
     }
 
-    /// Pre-compute ellipse points (centered at mean, rotated 45°)
-    private var ellipsePoints: [EllipsePoint] {
+    /// Compute ellipse points for a given sigma level (centered at mean, rotated 45°).
+    private func ellipsePoints(sigma: Float) -> [EllipsePoint] {
         guard results.sd1 > 0, results.sd2 > 0 else { return [] }
         let steps = 61  // 60 segments + close
         let cx = meanRR
@@ -609,8 +671,8 @@ struct PoincareChartView: View {
 
         return (0..<steps).map { i in
             let angle = Float(i) / Float(steps - 1) * 2 * Float.pi
-            let ex = results.sd2 * cos(angle)
-            let ey = results.sd1 * sin(angle)
+            let ex = results.sd2 * sigma * cos(angle)
+            let ey = results.sd1 * sigma * sin(angle)
             let rx = ex * cosA - ey * sinA + cx
             let ry = ex * sinA + ey * cosA + cy
             return EllipsePoint(id: i, x: rx, y: ry)
@@ -633,16 +695,18 @@ struct PoincareChartView: View {
                 .foregroundStyle(Color.gray.opacity(0.3))
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
 
-                // SD1/SD2 ellipse — bright cyan, thick, solid line
+                // SD1/SD2 ellipses — 1σ, 2σ, 3σ (outermost first for layering)
                 if showEllipse {
-                    ForEach(ellipsePoints) { pt in
-                        LineMark(
-                            x: .value("EX", pt.x),
-                            y: .value("EY", pt.y),
-                            series: .value("Ellipse", "ellipse")
-                        )
-                        .foregroundStyle(Color.cyan.opacity(0.9))
-                        .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    ForEach(Array(Self.sigmaLevels.reversed().enumerated()), id: \.offset) { _, sigma in
+                        ForEach(ellipsePoints(sigma: sigma.multiplier)) { pt in
+                            LineMark(
+                                x: .value("EX", pt.x),
+                                y: .value("EY", pt.y),
+                                series: .value("Ellipse", "ellipse-\(sigma.label)")
+                            )
+                            .foregroundStyle(Color.cyan.opacity(sigma.opacity))
+                            .lineStyle(StrokeStyle(lineWidth: sigma.lineWidth, dash: sigma.dash))
+                        }
                     }
                 }
 
@@ -653,7 +717,7 @@ struct PoincareChartView: View {
                         y: .value("RR[n+1] (ms)", point.rrN1)
                     )
                     .symbolSize(16)
-                    .foregroundStyle(point.inside ? Color.green.opacity(0.5) : Color.orange.opacity(0.7))
+                    .foregroundStyle(zoneColor(point.zone))
                 }
             }
             .chartXAxis {
@@ -685,6 +749,12 @@ struct PoincareChartView: View {
             .chartLegend(.hidden)
             .frame(height: 300)
             .overlay(alignment: .topLeading) {
+                let a = analysis
+                let total = a.zone1Count + a.zone2Count + a.zone3Count + a.outsideCount
+                let pct = { (count: Int) -> String in
+                    total > 0 ? String(format: "%.0f", Float(count) / Float(total) * 100) : "0"
+                }
+
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         RoundedRectangle(cornerRadius: 1)
@@ -701,17 +771,25 @@ struct PoincareChartView: View {
                     if results.sd1 > 0 {
                         Text("SD2/SD1: \(String(format: "%.2f", results.sd2 / results.sd1))")
                     }
-                    Divider().frame(width: 110)
+                    Divider().frame(width: 140)
                     HStack(spacing: 4) {
                         Circle().fill(Color.green).frame(width: 7, height: 7)
-                        Text("Inside: \(insideCount) (\(String(format: "%.0f", insidePercent))%)")
+                        Text("1\u{03C3}: \(a.zone1Count) (\(pct(a.zone1Count))%)")
+                    }
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.yellow).frame(width: 7, height: 7)
+                        Text("2\u{03C3}: \(a.zone2Count) (\(pct(a.zone2Count))%)")
                     }
                     HStack(spacing: 4) {
                         Circle().fill(Color.orange).frame(width: 7, height: 7)
-                        Text("Outside: \(outsideCount) (\(String(format: "%.0f", 100 - insidePercent))%)")
+                        Text("3\u{03C3}: \(a.zone3Count) (\(pct(a.zone3Count))%)")
+                    }
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.red).frame(width: 7, height: 7)
+                        Text("Out: \(a.outsideCount) (\(pct(a.outsideCount))%)")
                     }
                 }
-                .font(.system(size: 12).monospacedDigit())
+                .font(.system(size: 11).monospacedDigit())
                 .padding(10)
                 .background(.ultraThinMaterial)
                 .cornerRadius(8)
@@ -721,7 +799,7 @@ struct PoincareChartView: View {
             // Controls
             HStack {
                 Toggle(isOn: $showEllipse) {
-                    Label("SD1/SD2 Ellipse", systemImage: "oval")
+                    Label("SD1/SD2 Ellipses (1\u{2013}3\u{03C3})", systemImage: "oval")
                         .font(.caption)
                 }
                 .toggleStyle(.button)

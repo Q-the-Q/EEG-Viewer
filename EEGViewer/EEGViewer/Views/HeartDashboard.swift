@@ -142,7 +142,8 @@ struct HeartDashboard: View {
                 .padding(.horizontal)
 
                 // Section: ECG Waveform (height adapts to amplitude scale)
-                sectionHeader("ECG Waveform", systemImage: "waveform.path.ecg")
+                sectionHeader("ECG Waveform", systemImage: "waveform.path.ecg",
+                             info: MetricInfoContent.ecgWaveform)
                 ECGWaveformView(
                     ecgSignal: edfData.ecgData ?? [],
                     sfreq: edfData.sfreq,
@@ -152,22 +153,26 @@ struct HeartDashboard: View {
                 .padding(.horizontal)
 
                 // Section: HRV Metrics
-                sectionHeader("HRV Metrics", systemImage: "heart.text.square")
+                sectionHeader("HRV Metrics", systemImage: "heart.text.square",
+                             info: MetricInfoContent.hrvMetrics)
                 HRVMetricsCard(results: results)
                     .padding(.horizontal)
 
                 // Section: R-R Tachogram
-                sectionHeader("R-R Interval Tachogram", systemImage: "chart.xyaxis.line")
+                sectionHeader("R-R Interval Tachogram", systemImage: "chart.xyaxis.line",
+                             info: MetricInfoContent.tachogram)
                 TachogramChartView(results: results)
                     .padding(.horizontal)
 
                 // Section: HRV Spectrum
-                sectionHeader("HRV Frequency Spectrum", systemImage: "waveform.circle")
+                sectionHeader("HRV Frequency Spectrum", systemImage: "waveform.circle",
+                             info: MetricInfoContent.hrvSpectrum)
                 HRVSpectrumChartView(results: results)
                     .padding(.horizontal)
 
                 // Section: Poincaré Plot
-                sectionHeader("Poincar\u{00E9} Plot", systemImage: "circle.grid.cross")
+                sectionHeader("Poincar\u{00E9} Plot", systemImage: "circle.grid.cross",
+                             info: MetricInfoContent.poincarePlot)
                 PoincareChartView(results: results)
                     .padding(.horizontal)
 
@@ -175,7 +180,8 @@ struct HeartDashboard: View {
                     .padding(.horizontal)
 
                 // Section: Heart-Brain Coherence
-                sectionHeader("Heart-Brain Coherence", systemImage: "brain.head.profile.fill")
+                sectionHeader("Heart-Brain Coherence", systemImage: "brain.head.profile.fill",
+                             info: MetricInfoContent.heartBrainCoherence)
                 HeartBrainCoherenceChartView(results: results)
                     .padding(.horizontal)
 
@@ -185,12 +191,16 @@ struct HeartDashboard: View {
         }
     }
 
-    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+    private func sectionHeader(_ title: String, systemImage: String,
+                               info: MetricInfoContent.InfoItem? = nil) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
                 .foregroundStyle(.red)
             Text(title)
                 .font(.headline)
+            if let info = info {
+                InfoButton(info: info)
+            }
         }
         .padding(.horizontal)
     }
