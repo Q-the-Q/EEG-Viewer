@@ -19,6 +19,114 @@ struct QEEGResults {
     let channels: [String]
     let sfreq: Float
     let sourceFilename: String
+    /// True when this result set represents a diff (post − baseline), not a real recording.
+    let isDiff: Bool
+
+    init(freqs: [Float], psd: [[Float]], bandPowers: [String: [Float]],
+         relativePowers: [String: [Float]], zscores: [String: [Float]],
+         coherence: [String: [[Float]]], asymmetry: [String: [(pair: String, value: Float)]],
+         peakFreqs: [(channel: String, alphaPeak: Float, dominant: Float)],
+         artifactStats: SignalProcessor.ArtifactStats, cleanData: [[Float]],
+         channels: [String], sfreq: Float, sourceFilename: String, isDiff: Bool = false) {
+        self.freqs = freqs; self.psd = psd; self.bandPowers = bandPowers
+        self.relativePowers = relativePowers; self.zscores = zscores
+        self.coherence = coherence; self.asymmetry = asymmetry
+        self.peakFreqs = peakFreqs; self.artifactStats = artifactStats
+        self.cleanData = cleanData; self.channels = channels
+        self.sfreq = sfreq; self.sourceFilename = sourceFilename; self.isDiff = isDiff
+    }
+
+    /// Compute element-wise difference: post − baseline.
+    /// PSD is stored in the amplitude domain (sqrt(post) − sqrt(baseline)) so the spectra chart
+    /// can display values as µV change without needing sqrtf on potentially negative numbers.
+    /// Returns nil if channels or frequency resolution don't match.
+    static func diff(baseline: QEEGResults, post: QEEGResults) -> QEEGResults? {
+        guard baseline.channels == post.channels,
+              baseline.freqs.count == post.freqs.count else { return nil }
+
+        let nCh = baseline.channels.count
+        let nFreq = baseline.freqs.count
+
+        // PSD: amplitude-domain diff → sqrt(post) - sqrt(baseline)
+        var diffPSD = [[Float]](repeating: [Float](repeating: 0, count: nFreq), count: nCh)
+        for ch in 0..<nCh {
+            for f in 0..<nFreq {
+                let postAmp = ch < post.psd.count && f < post.psd[ch].count
+                    ? sqrtf(max(0, post.psd[ch][f])) : 0
+                let baseAmp = ch < baseline.psd.count && f < baseline.psd[ch].count
+                    ? sqrtf(max(0, baseline.psd[ch][f])) : 0
+                diffPSD[ch][f] = postAmp - baseAmp
+            }
+        }
+
+        // Band powers, relative powers, z-scores: element-wise diff
+        let bands = Array(baseline.bandPowers.keys)
+        var diffBandPowers = [String: [Float]]()
+        var diffRelativePowers = [String: [Float]]()
+        var diffZscores = [String: [Float]]()
+        for band in bands {
+            let bp1 = baseline.bandPowers[band] ?? []
+            let bp2 = post.bandPowers[band] ?? []
+            diffBandPowers[band] = (0..<nCh).map { i in
+                (i < bp2.count ? bp2[i] : 0) - (i < bp1.count ? bp1[i] : 0)
+            }
+            let rp1 = baseline.relativePowers[band] ?? []
+            let rp2 = post.relativePowers[band] ?? []
+            diffRelativePowers[band] = (0..<nCh).map { i in
+                (i < rp2.count ? rp2[i] : 0) - (i < rp1.count ? rp1[i] : 0)
+            }
+            let z1 = baseline.zscores[band] ?? []
+            let z2 = post.zscores[band] ?? []
+            diffZscores[band] = (0..<nCh).map { i in
+                (i < z2.count ? z2[i] : 0) - (i < z1.count ? z1[i] : 0)
+            }
+        }
+
+        // Coherence: element-wise matrix diff per band
+        var diffCoherence = [String: [[Float]]]()
+        for band in bands {
+            let c1 = baseline.coherence[band] ?? []
+            let c2 = post.coherence[band] ?? []
+            var matrix = [[Float]](repeating: [Float](repeating: 0, count: nCh), count: nCh)
+            for i in 0..<nCh {
+                for j in 0..<nCh {
+                    let v1 = (i < c1.count && j < c1[i].count) ? c1[i][j] : 0
+                    let v2 = (i < c2.count && j < c2[i].count) ? c2[i][j] : 0
+                    matrix[i][j] = v2 - v1
+                }
+            }
+            diffCoherence[band] = matrix
+        }
+
+        // Asymmetry: match pairs by name and diff
+        var diffAsymmetry = [String: [(pair: String, value: Float)]]()
+        for band in bands {
+            let a1 = baseline.asymmetry[band] ?? []
+            let a2 = post.asymmetry[band] ?? []
+            let a1Dict = Dictionary(uniqueKeysWithValues: a1.map { ($0.pair, $0.value) })
+            diffAsymmetry[band] = a2.map { item in
+                let baseVal = a1Dict[item.pair] ?? 0
+                return (pair: item.pair, value: item.value - baseVal)
+            }
+        }
+
+        // Peak frequencies: diff per channel
+        let diffPeaks: [(channel: String, alphaPeak: Float, dominant: Float)] =
+            zip(baseline.peakFreqs, post.peakFreqs).map { b, p in
+                (channel: b.channel, alphaPeak: p.alphaPeak - b.alphaPeak,
+                 dominant: p.dominant - b.dominant)
+            }
+
+        return QEEGResults(
+            freqs: baseline.freqs, psd: diffPSD,
+            bandPowers: diffBandPowers, relativePowers: diffRelativePowers,
+            zscores: diffZscores, coherence: diffCoherence,
+            asymmetry: diffAsymmetry, peakFreqs: diffPeaks,
+            artifactStats: post.artifactStats, cleanData: [],
+            channels: baseline.channels, sfreq: baseline.sfreq,
+            sourceFilename: "Difference (R2 \u{2212} R1)", isDiff: true
+        )
+    }
 }
 
 @MainActor
