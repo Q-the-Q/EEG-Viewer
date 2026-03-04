@@ -607,6 +607,68 @@ struct SignalProcessor {
         return Array(output[2..<n+2])
     }
 
+    // MARK: - Interpolation
+
+    /// Linearly interpolate unevenly sampled data onto a uniform time grid.
+    /// - Parameters:
+    ///   - times: Timestamps of input samples (sorted ascending)
+    ///   - values: Values at each timestamp
+    ///   - targetSfreq: Output sampling frequency in Hz
+    /// - Returns: Uniformly sampled signal from times.first to times.last
+    static func interpolateLinear(times: [Float], values: [Float],
+                                   targetSfreq: Float) -> [Float] {
+        guard times.count == values.count, times.count >= 2 else { return [] }
+        let tStart = times.first!
+        let tEnd = times.last!
+        let nSamples = max(1, Int((tEnd - tStart) * targetSfreq) + 1)
+        var result = [Float](repeating: 0, count: nSamples)
+
+        var j = 0
+        for i in 0..<nSamples {
+            let t = tStart + Float(i) / targetSfreq
+            while j < times.count - 2 && times[j + 1] < t {
+                j += 1
+            }
+            let t0 = times[j]
+            let t1 = times[min(j + 1, times.count - 1)]
+            let dt = t1 - t0
+            if dt > 0 {
+                let frac = (t - t0) / dt
+                result[i] = values[j] + frac * (values[min(j + 1, values.count - 1)] - values[j])
+            } else {
+                result[i] = values[j]
+            }
+        }
+        return result
+    }
+
+    // MARK: - Envelope
+
+    /// Compute amplitude envelope using windowed RMS with a sliding step.
+    /// Returns a downsampled envelope at approximately 1/stepSec Hz.
+    static func windowedRMSEnvelope(_ signal: [Float], sfreq: Float,
+                                      windowSec: Float = 2.0,
+                                      stepSec: Float = 0.25) -> [Float] {
+        let windowSamples = max(1, Int(windowSec * sfreq))
+        let stepSamples = max(1, Int(stepSec * sfreq))
+        let n = signal.count
+        guard n >= windowSamples else { return [] }
+
+        // Square the signal
+        var squared = [Float](repeating: 0, count: n)
+        vDSP_vsq(signal, 1, &squared, 1, vDSP_Length(n))
+
+        var result = [Float]()
+        var start = 0
+        while start + windowSamples <= n {
+            var sum: Float = 0
+            vDSP_sve(Array(squared[start..<start + windowSamples]), 1, &sum, vDSP_Length(windowSamples))
+            result.append(sqrtf(sum / Float(windowSamples)))
+            start += stepSamples
+        }
+        return result
+    }
+
     // MARK: - Decimation
 
     /// Decimate a signal by factor (anti-alias LP filter + downsample).

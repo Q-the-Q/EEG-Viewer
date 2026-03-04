@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var fileLoadID = UUID()
     @StateObject private var analyzer = QEEGAnalyzer()
+    @StateObject private var hrvAnalyzer = HRVAnalyzer()
 
     var body: some View {
         NavigationStack {
@@ -19,20 +20,24 @@ struct ContentView: View {
                 if let data = edfData {
                     TabView(selection: $selectedTab) {
                         WaveformView(edfData: data)
-                            .tabItem { Label("EEG Waveform", systemImage: "waveform.path") }
+                            .tabItem { Label("Waveforms", systemImage: "waveform.path") }
                             .tag(0)
 
                         BandPowerView(edfData: data)
-                            .tabItem { Label("Band Waveforms", systemImage: "chart.line.uptrend.xyaxis") }
+                            .tabItem { Label("Bands", systemImage: "chart.line.uptrend.xyaxis") }
                             .tag(1)
 
                         QEEGDashboard(edfData: data, analyzer: analyzer, primaryFilename: loadedFilename)
-                            .tabItem { Label("qEEG Analysis", systemImage: "brain.head.profile") }
+                            .tabItem { Label("qEEG", systemImage: "brain.head.profile") }
                             .tag(2)
 
                         BrainView3D(edfData: data)
                             .tabItem { Label("3D Brain", systemImage: "brain") }
                             .tag(3)
+
+                        HeartDashboard(edfData: data, analyzer: hrvAnalyzer, primaryFilename: loadedFilename)
+                            .tabItem { Label("\u{2764}\u{FE0F}", systemImage: "heart.fill") }
+                            .tag(4)
                     }
                     .id(fileLoadID)
                 } else {
@@ -95,8 +100,10 @@ struct ContentView: View {
             self.edfData = data
             self.loadedFilename = url.lastPathComponent
             self.errorMessage = nil
-            // Reset analyzer so stale results from previous file are cleared
+            // Reset analyzers so stale results from previous file are cleared
             self.analyzer.results = nil
+            self.hrvAnalyzer.results = nil
+            self.hrvAnalyzer.errorMessage = nil
             // New ID forces SwiftUI to recreate all tab views (resets @State, re-fires .onAppear)
             self.fileLoadID = UUID()
         } catch {

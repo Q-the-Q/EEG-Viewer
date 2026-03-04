@@ -28,6 +28,10 @@
 		A10000019 /* lh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000019; };
 		A10000020 /* rh.pial.obj in Resources */ = {isa = PBXBuildFile; fileRef = A20000020; };
 		A10000021 /* PDFExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000021; };
+		A10000022 /* HRVAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000022; };
+		A10000023 /* HeartDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000023; };
+		A10000024 /* ECGWaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000024; };
+		A10000025 /* HRVChartsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000025; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +56,10 @@
 		A20000019 /* lh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = lh.pial.obj; sourceTree = "<group>"; };
 		A20000020 /* rh.pial.obj */ = {isa = PBXFileReference; lastKnownFileType = text; path = rh.pial.obj; sourceTree = "<group>"; };
 		A20000021 /* PDFExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFExporter.swift; sourceTree = "<group>"; };
+		A20000022 /* HRVAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HRVAnalyzer.swift; sourceTree = "<group>"; };
+		A20000023 /* HeartDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartDashboard.swift; sourceTree = "<group>"; };
+		A20000024 /* ECGWaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ECGWaveformView.swift; sourceTree = "<group>"; };
+		A20000025 /* HRVChartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HRVChartsView.swift; sourceTree = "<group>"; };
 		A30000001 /* EEGViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EEGViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -94,6 +102,7 @@
 				A20000005 /* Constants.swift */,
 				A20000006 /* SignalProcessor.swift */,
 				A20000007 /* QEEGAnalyzer.swift */,
+				A20000022 /* HRVAnalyzer.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -110,6 +119,9 @@
 				A20000013 /* CoherenceHeatmapView.swift */,
 				A20000014 /* AsymmetryChartView.swift */,
 				A20000018 /* BrainView3D.swift */,
+				A20000023 /* HeartDashboard.swift */,
+				A20000024 /* ECGWaveformView.swift */,
+				A20000025 /* HRVChartsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -231,6 +243,10 @@
 				A10000016 /* TopoMapRenderer.swift in Sources */,
 				A10000018 /* BrainView3D.swift in Sources */,
 				A10000021 /* PDFExporter.swift in Sources */,
+				A10000022 /* HRVAnalyzer.swift in Sources */,
+				A10000023 /* HeartDashboard.swift in Sources */,
+				A10000024 /* ECGWaveformView.swift in Sources */,
+				A10000025 /* HRVChartsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

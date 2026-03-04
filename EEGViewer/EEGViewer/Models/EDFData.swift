@@ -47,4 +47,31 @@ struct EDFData {
     var eegData: [[Float]] {
         eegIndices.map { data[$0] }
     }
+
+    // MARK: - ECG Access
+
+    /// Index of the ECG/EKG channel, if present.
+    var ecgIndex: Int? {
+        channelNames.firstIndex { name in
+            let upper = name.uppercased()
+            return upper == "ECG" || upper == "EKG"
+        }
+    }
+
+    /// ECG channel name, if present.
+    var ecgChannelName: String? {
+        guard let idx = ecgIndex else { return nil }
+        return channelNames[idx]
+    }
+
+    /// ECG data in Volts, if present.
+    var ecgData: [Float]? {
+        guard let idx = ecgIndex else { return nil }
+        return data[idx]
+    }
+
+    /// Whether this EDF file contains an ECG channel.
+    var hasECG: Bool {
+        ecgIndex != nil
+    }
 }
