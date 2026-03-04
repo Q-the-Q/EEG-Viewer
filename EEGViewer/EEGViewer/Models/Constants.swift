@@ -142,4 +142,52 @@ enum Constants {
 
     static let spectrogramNperseg: Int = 256
     static let spectrogramNoverlap: Int = 192
+
+    // MARK: - HRV Analysis Parameters
+
+    static let hrvInterpolationRate: Float = 4.0       // Hz for uniform RR resampling
+    static let hrvPsdNperseg: Int = 256                 // Welch PSD segment length at 4 Hz
+    static let hrvPsdNoverlap: Int = 128                // 50% overlap
+
+    static let lfBand: (low: Float, high: Float) = (0.04, 0.15)
+    static let hfBand: (low: Float, high: Float) = (0.15, 0.4)
+    static let totalHRVBand: (low: Float, high: Float) = (0.003, 0.4)
+
+    // R-peak detection
+    static let rPeakRefractoryMs: Float = 200.0         // Min ms between R-peaks
+    static let rPeakMinRR_ms: Float = 300.0              // Min valid RR interval (200 BPM)
+    static let rPeakMaxRR_ms: Float = 2000.0             // Max valid RR interval (30 BPM)
+    static let ecgBandpassLow: Float = 5.0               // Hz for R-peak preprocessing
+    static let ecgBandpassHigh: Float = 15.0             // Hz for R-peak preprocessing
+
+    // Heart-Brain Coherence
+    static let heartBrainCoherenceBand: (low: Float, high: Float) = (0.04, 0.15)
+    static let eegEnvelopeWindowSec: Float = 2.0         // Window for EEG band power envelope
+    static let eegEnvelopeStepSec: Float = 0.25          // Step size for sliding window → 4 Hz output
+
+    // MARK: - HRV Reference Ranges (short-term recording norms)
+    // Ranges: (low, normalLow, normalHigh, high) — values outside normal shown as yellow/red
+
+    struct HRVRange {
+        let min: Float          // Absolute minimum (floor of gauge)
+        let normalLow: Float    // Start of normal range
+        let normalHigh: Float   // End of normal range
+        let max: Float          // Absolute maximum (ceiling of gauge)
+        let lowLabel: String    // Label when below normal
+        let normalLabel: String // Label when in normal range
+        let highLabel: String   // Label when above normal
+    }
+
+    static let hrvRanges: [String: HRVRange] = [
+        "meanHR": HRVRange(min: 30, normalLow: 60, normalHigh: 100, max: 180,
+                           lowLabel: "Bradycardia", normalLabel: "Normal", highLabel: "Tachycardia"),
+        "sdnn": HRVRange(min: 0, normalLow: 50, normalHigh: 150, max: 300,
+                         lowLabel: "Low Variability", normalLabel: "Normal", highLabel: "High Variability"),
+        "rmssd": HRVRange(min: 0, normalLow: 20, normalHigh: 75, max: 150,
+                          lowLabel: "Low Vagal", normalLabel: "Normal", highLabel: "High Vagal"),
+        "pnn50": HRVRange(min: 0, normalLow: 5, normalHigh: 40, max: 80,
+                          lowLabel: "Low", normalLabel: "Normal", highLabel: "High"),
+        "lfhf": HRVRange(min: 0, normalLow: 0.5, normalHigh: 5.0, max: 30,
+                          lowLabel: "Parasympathetic", normalLabel: "Balanced", highLabel: "Sympathetic"),
+    ]
 }
