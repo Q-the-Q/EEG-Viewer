@@ -1,6 +1,6 @@
 """Magnitude spectra plots for Frontal, Central, and Posterior regions.
 
-Matches the NeuroSynchrony PDF report layout:
+PDF report layout:
 - Colored band shading (Delta, Theta, Alpha, Beta) with distinct light tints
 - Light vertical gridlines at every 1 Hz
 - Dashed vertical lines at band boundaries (4, 8, 13 Hz)
@@ -35,7 +35,7 @@ _HGRID_COLOR = "#DDDDDD"         # Horizontal gridlines
 
 
 class SpectraWidget(QWidget):
-    """Three magnitude spectra plots matching the NeuroSynchrony PDF style."""
+    """Three magnitude spectra plots"""
 
     REGIONS = ["Frontal", "Central", "Posterior"]
 

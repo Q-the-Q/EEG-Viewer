@@ -69,7 +69,7 @@ class EDFLoader:
 
         # Apply a 1 Hz high-pass filter to remove slow DC drift and reduce
         # eye-blink artifacts in frontal channels. Clinical qEEG software
-        # (e.g., NeuroSynchrony) applies similar preprocessing.
+        # applies similar preprocessing.
         self.raw.filter(l_freq=1.0, h_freq=None, picks="eeg", verbose=False)
 
         # Store metadata

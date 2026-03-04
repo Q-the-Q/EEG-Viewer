@@ -1,7 +1,5 @@
 """PDF report generation using reportlab with embedded matplotlib plots.
 
-Matches the NeuroSynchrony PDF report style: uniform cyan spectra shading,
-matching topomap colormap, and proper layout proportions.
 """
 
 import io
@@ -121,7 +119,7 @@ class PDFReportGenerator:
         doc.build(elements)
 
     def _render_spectra(self, analyzer):
-        """Render magnitude spectra matching the NeuroSynchrony PDF style."""
+        """Render magnitude spectra"""
         fig = Figure(figsize=(10, 6), dpi=150)
         fig.set_facecolor("white")
 
@@ -183,7 +181,7 @@ class PDFReportGenerator:
         return buf
 
     def _render_topomaps(self, analyzer, eeg_info):
-        """Render topographic maps matching the NeuroSynchrony PDF colormap."""
+        """Render topographic maps"""
         from ..ui.topomap_widget import ZSCORE_CMAP
 
         fig = Figure(figsize=(14, 4.5), dpi=150)

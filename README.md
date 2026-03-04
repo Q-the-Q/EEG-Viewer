@@ -187,7 +187,7 @@ Before analysis, the raw EEG data undergoes the following preprocessing steps:
    - **Eye blinks/movements (EOG)** — sharp frontal deflections (Fp1, Fp2)
    - **Electrode pops** — sudden spikes from loose electrode contact
 
-   Only the clean (artifact-free) epochs are concatenated and used for all subsequent spectral computations. This is the standard approach used by clinical qEEG software (NeuroSynchrony, NeuroGuide, BrainDx). If fewer than 30 clean epochs remain, the threshold is progressively relaxed (to 150, 200, 300, then 500 µV) to ensure enough data for reliable spectral estimation.
+   Only the clean (artifact-free) epochs are concatenated and used for all subsequent spectral computations. This is a standard approach used by clinical qEEG software. If fewer than 30 clean epochs remain, the threshold is progressively relaxed (to 150, 200, 300, then 500 µV) to ensure enough data for reliable spectral estimation.
 
 ### Power Spectral Density (PSD) via Welch's Method
 
@@ -255,8 +255,6 @@ Topographic maps (topomaps) display the spatial distribution of a measurement ac
 1. Takes the 19 Z-score values at their known electrode positions
 2. Interpolates values across the head surface using spherical spline interpolation
 3. Renders the result as a color-mapped 2D head image
-
-The custom colormap ranges from dark navy blue (-2.5 Z) through cyan and white (0 Z) to red, orange, and yellow (+2.5 Z), matching the NeuroSynchrony clinical report style.
 
 ### Coherence
 

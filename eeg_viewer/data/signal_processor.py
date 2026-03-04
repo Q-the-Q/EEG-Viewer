@@ -172,8 +172,7 @@ class SignalProcessor:
         peak-to-peak amplitude for each channel in each epoch, and rejects
         any epoch where ANY channel exceeds the threshold.
 
-        This is the standard approach used in clinical qEEG software like
-        NeuroSynchrony, NeuroGuide, and BrainDx.
+        This is a standard approach used in clinical qEEG software.
 
         Args:
             data: Array of shape (n_channels, n_samples) in Volts.
