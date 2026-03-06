@@ -452,7 +452,7 @@ struct QEEGDashboard: View {
     ) -> Float? {
         guard allResults.count > 1 else { return nil }
         var maxAbs: Float = 0
-        for entry in allResults {
+        for entry in allResults where !entry.isDiff {
             if let pairs = entry.results.asymmetry[band] {
                 for item in pairs {
                     maxAbs = max(maxAbs, abs(item.value))
