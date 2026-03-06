@@ -1,5 +1,6 @@
 // CoherenceHeatmapView.swift
 // Coherence heatmap matrix rendered via Canvas. Shows inter-channel coherence 0–1.
+// In diff mode, shows coherence change (−1 to +1) with diverging colormap.
 // Band selection is controlled externally (from QEEGDashboard) so all recordings share the same band.
 
 import SwiftUI
@@ -8,10 +9,12 @@ struct CoherenceHeatmapView: View {
     let results: QEEGResults
     /// Which frequency band to display. Controlled by the parent view.
     var selectedBand: String = "Alpha"
+    /// When true, values represent coherence differences and may be negative.
+    var isDiff: Bool = false
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("Coherence Matrix")
+            Text(isDiff ? "Coherence Change" : "Coherence Matrix")
                 .font(.caption.bold())
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -38,8 +41,7 @@ struct CoherenceHeatmapView: View {
         for i in 0..<n {
             for j in 0..<n {
                 let value = matrix[i][j]
-                // Yellow-Orange-Red colormap
-                let color = coherenceColor(value)
+                let color = isDiff ? diffCoherenceColor(value) : coherenceColor(value)
                 let rect = CGRect(
                     x: offsetX + CGFloat(j) * cellSize,
                     y: offsetY + CGFloat(i) * cellSize,
@@ -69,6 +71,7 @@ struct CoherenceHeatmapView: View {
         }
     }
 
+    /// Standard coherence colormap (0–1): Yellow → Orange → Red
     private func coherenceColor(_ value: Float) -> Color {
         let t = max(0, min(1, value))
         // Yellow → Orange → Red
@@ -79,5 +82,13 @@ struct CoherenceHeatmapView: View {
             let f = Double((t - 0.5) / 0.5)
             return Color(red: 1.0, green: 0.65 * (1.0 - f), blue: 0)
         }
+    }
+
+    /// Diff coherence colormap (−1 to +1): uses the existing EEG z-score diverging colormap.
+    /// Maps: −1 → cyan (decreased), 0 → black (unchanged), +1 → yellow (increased).
+    private func diffCoherenceColor(_ value: Float) -> Color {
+        let clamped = max(-1, min(1, value))
+        let position = (clamped + 1) / 2  // Map −1...+1 to 0...1
+        return ColorMap.eegColorMap(at: position)
     }
 }

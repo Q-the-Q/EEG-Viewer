@@ -22,7 +22,7 @@ class ComparisonManager: ObservableObject {
     /// Per-session Combine sinks keyed by session ID — cleaned up on removal.
     private var sessionCancellables: [UUID: AnyCancellable] = [:]
 
-    var canAddMore: Bool { sessions.count < 2 }
+    var canAddMore: Bool { sessions.count < 1 }
 
     func addSession(edfData: EDFData, filename: String) {
         let analyzer = QEEGAnalyzer()
@@ -64,20 +64,25 @@ struct QEEGDashboard: View {
     @State private var isExporting = false
     @State private var selectedCoherenceBand: String = "Alpha"
     @State private var isLoadingComparison = false
+    @State private var showDiff = false
 
-    /// All available results: primary + comparisons (only those that have completed analysis).
-    /// Each entry includes a stable sessionID (nil for primary) for safe removal.
-    private var allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)] {
-        var list = [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)]()
+    /// All available results: primary + comparisons + optional diff.
+    /// Each entry includes a stable sessionID (nil for primary/diff) and isDiff flag.
+    private var allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?, isDiff: Bool)] {
+        var list = [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?, isDiff: Bool)]()
         if let r = analyzer.results {
-            // Use sourceFilename baked into results at analysis time — more reliable
-            // than the view-passed primaryFilename which can get stale during re-renders
-            list.append((index: 1, filename: r.sourceFilename, results: r, sessionID: nil))
+            list.append((index: 1, filename: r.sourceFilename, results: r, sessionID: nil, isDiff: false))
         }
         for (i, session) in comparisonManager.sessions.enumerated() {
             if let r = session.analyzer.results {
-                list.append((index: i + 2, filename: r.sourceFilename, results: r, sessionID: session.id))
+                list.append((index: i + 2, filename: r.sourceFilename, results: r, sessionID: session.id, isDiff: false))
             }
+        }
+        // Append synthetic diff as 3rd entry when toggled on
+        if showDiff, list.count == 2,
+           let diffResults = QEEGResults.diff(baseline: list[0].results, post: list[1].results) {
+            list.append((index: 3, filename: diffResults.sourceFilename,
+                         results: diffResults, sessionID: nil, isDiff: true))
         }
         return list
     }
@@ -129,11 +134,21 @@ struct QEEGDashboard: View {
                 // ── Magnitude Spectra ──────────────────────────
                 sectionHeader("Magnitude Spectra")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
-                    if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
+                    if hasComparisons || showDiff {
+                        recordingLabel(index: entry.index, filename: entry.filename,
+                                       sessionID: entry.sessionID, isDiff: entry.isDiff)
                     }
-                    artifactStatsBar(results: entry.results)
-                    spectraRow(results: entry.results, sharedMaxY: sharedSpectraMaxY)
+                    if entry.isDiff {
+                        // Overlay both recordings on one chart with differential area fill
+                        if results.count >= 2 {
+                            spectraOverlayRow(baseline: results[0].results,
+                                              post: results[1].results,
+                                              sharedMaxY: sharedSpectraMaxY)
+                        }
+                    } else {
+                        artifactStatsBar(results: entry.results)
+                        spectraRow(results: entry.results, sharedMaxY: sharedSpectraMaxY)
+                    }
                 }
 
                 Divider()
@@ -141,8 +156,9 @@ struct QEEGDashboard: View {
                 // ── Topographic Z-Score Maps ──────────────────
                 sectionHeader("Topographic Z-Score Maps")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
-                    if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
+                    if hasComparisons || showDiff {
+                        recordingLabel(index: entry.index, filename: entry.filename,
+                                       sessionID: entry.sessionID, isDiff: entry.isDiff)
                     }
                     topoRow(results: entry.results)
                 }
@@ -162,12 +178,14 @@ struct QEEGDashboard: View {
                     .frame(width: 300)
                 }
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
-                    if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
+                    if hasComparisons || showDiff {
+                        recordingLabel(index: entry.index, filename: entry.filename,
+                                       sessionID: entry.sessionID, isDiff: entry.isDiff)
                     }
                     HStack(alignment: .top, spacing: 16) {
                         CoherenceHeatmapView(results: entry.results,
-                                             selectedBand: selectedCoherenceBand)
+                                             selectedBand: selectedCoherenceBand,
+                                             isDiff: entry.isDiff)
                             .frame(minHeight: 300)
 
                         AsymmetryChartView(results: entry.results,
@@ -182,10 +200,11 @@ struct QEEGDashboard: View {
                 // ── Peak Frequencies ──────────────────────────
                 sectionHeader("Peak Frequencies")
                 ForEach(Array(results.enumerated()), id: \.element.index) { _, entry in
-                    if hasComparisons {
-                        recordingLabel(index: entry.index, filename: entry.filename, sessionID: entry.sessionID)
+                    if hasComparisons || showDiff {
+                        recordingLabel(index: entry.index, filename: entry.filename,
+                                       sessionID: entry.sessionID, isDiff: entry.isDiff)
                     }
-                    peakFrequencyTable(results: entry.results)
+                    peakFrequencyTable(results: entry.results, isDiff: entry.isDiff)
                 }
             }
             .padding()
@@ -300,6 +319,16 @@ struct QEEGDashboard: View {
 
             Spacer()
 
+            // Show Difference toggle — visible when 2 recordings have completed analysis
+            if allResults.filter({ !$0.isDiff }).count == 2 {
+                Toggle(isOn: $showDiff) {
+                    Label("Show Difference", systemImage: "plus.forwardslash.minus")
+                        .font(.subheadline)
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.bordered)
+            }
+
             Button {
                 showComparisonPicker = true
             } label: {
@@ -320,20 +349,28 @@ struct QEEGDashboard: View {
 
     // MARK: - Recording Label
 
-    private func recordingLabel(index: Int, filename: String, sessionID: UUID?) -> some View {
+    private func recordingLabel(index: Int, filename: String, sessionID: UUID?,
+                               isDiff: Bool = false) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Recording \(index)")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.primary)
-                Text(filename)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if isDiff {
+                    Label("Difference (R2 \u{2212} R1)", systemImage: "plus.forwardslash.minus")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.purple)
+                } else {
+                    Text("Recording \(index)")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.primary)
+                    Text(filename)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
-            // Show remove button for comparisons (sessionID != nil)
-            if let id = sessionID {
+            // Show remove button for comparisons (sessionID != nil), not for diff
+            if let id = sessionID, !isDiff {
                 Button {
+                    withAnimation { showDiff = false }
                     comparisonManager.removeSession(id: id)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -377,11 +414,27 @@ struct QEEGDashboard: View {
         }
     }
 
-    /// Compute shared spectra Y-axis max across ALL recordings.
-    private func computeSharedSpectraMaxY(allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)]) -> Float {
+    /// Overlay spectra row — renders both recordings on the same chart per region.
+    private func spectraOverlayRow(baseline: QEEGResults, post: QEEGResults,
+                                   sharedMaxY: Float) -> some View {
+        let regions = ["Frontal", "Central", "Posterior"]
+
+        return HStack(alignment: .top, spacing: 12) {
+            ForEach(regions, id: \.self) { region in
+                let channelNames = Constants.regionMap[region] ?? []
+                SpectraOverlayView(baselineResults: baseline, postResults: post,
+                                   region: region, channels: channelNames,
+                                   sharedMaxY: sharedMaxY)
+                    .frame(minHeight: 200)
+            }
+        }
+    }
+
+    /// Compute shared spectra Y-axis max across ALL recordings (excluding diff entries).
+    private func computeSharedSpectraMaxY(allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?, isDiff: Bool)]) -> Float {
         let regions = ["Frontal", "Central", "Posterior"]
         var globalPeak: Float = 0
-        for entry in allResults {
+        for entry in allResults where !entry.isDiff {
             for region in regions {
                 let chs = Constants.regionMap[region] ?? []
                 let peak = SpectraChartView.peakAmplitude(results: entry.results, channels: chs)
@@ -394,12 +447,12 @@ struct QEEGDashboard: View {
     /// Compute a shared symmetric x-axis range for asymmetry charts across all recordings.
     /// When only one recording, returns nil (auto-scale). With 2+, returns the max |value| + padding.
     private func computeSharedAsymmetryRange(
-        allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?)],
+        allResults: [(index: Int, filename: String, results: QEEGResults, sessionID: UUID?, isDiff: Bool)],
         band: String
     ) -> Float? {
         guard allResults.count > 1 else { return nil }
         var maxAbs: Float = 0
-        for entry in allResults {
+        for entry in allResults where !entry.isDiff {
             if let pairs = entry.results.asymmetry[band] {
                 for item in pairs {
                     maxAbs = max(maxAbs, abs(item.value))
@@ -430,7 +483,7 @@ struct QEEGDashboard: View {
 
     // MARK: - Peak Frequency Table
 
-    private func peakFrequencyTable(results: QEEGResults) -> some View {
+    private func peakFrequencyTable(results: QEEGResults, isDiff: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(columns: [
                 GridItem(.flexible(minimum: 60)),
@@ -439,16 +492,33 @@ struct QEEGDashboard: View {
             ], spacing: 4) {
                 // Header
                 Text("Channel").font(.caption.bold())
-                Text("Alpha Peak").font(.caption.bold())
-                Text("Dominant").font(.caption.bold())
+                Text(isDiff ? "\u{0394} Alpha Peak" : "Alpha Peak").font(.caption.bold())
+                Text(isDiff ? "\u{0394} Dominant" : "Dominant").font(.caption.bold())
 
                 ForEach(results.peakFreqs, id: \.channel) { peak in
                     Text(peak.channel).font(.caption)
-                    Text(String(format: "%.1f Hz", peak.alphaPeak)).font(.caption.monospacedDigit())
-                    Text(String(format: "%.1f Hz", peak.dominant)).font(.caption.monospacedDigit())
+                    diffFreqText(peak.alphaPeak, isDiff: isDiff)
+                    diffFreqText(peak.dominant, isDiff: isDiff)
                 }
             }
         }
+    }
+
+    /// Format a frequency value: red for positive diffs, blue for negative, default otherwise.
+    private func diffFreqText(_ value: Float, isDiff: Bool) -> some View {
+        let text: String
+        let color: Color
+        if isDiff {
+            let sign = value >= 0 ? "+" : ""
+            text = String(format: "%@%.1f Hz", sign, value)
+            color = value > 0.01 ? .red : (value < -0.01 ? Color(red: 0.3, green: 0.55, blue: 0.9) : .secondary)
+        } else {
+            text = String(format: "%.1f Hz", value)
+            color = .primary
+        }
+        return Text(text)
+            .font(.caption.monospacedDigit())
+            .foregroundColor(color)
     }
 
     // MARK: - Comparison File Loading
@@ -475,7 +545,7 @@ struct QEEGDashboard: View {
     private func exportPDF() {
         isExporting = true
         // Strip sessionID — PDFExporter doesn't need it
-        let pdfResults = allResults.map { (index: $0.index, filename: $0.filename, results: $0.results) }
+        let pdfResults = allResults.map { (index: $0.index, filename: $0.filename, results: $0.results, isDiff: $0.isDiff) }
         let data = edfData
         // Wrap in Task so the run loop yields and the spinner actually renders.
         // ImageRenderer must run on main actor, but Task yields before starting work.
