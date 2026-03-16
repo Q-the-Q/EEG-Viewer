@@ -18,28 +18,110 @@ struct WaveformView: View {
     @State private var showChannelSelector = false
     @State private var timer: AnyCancellable?
     @GestureState private var dragStartTime: Float?
+    @State private var activeLabelID: UUID?
+    @State private var pencilPreviewStart: CGFloat?
+    @State private var pencilPreviewEnd: CGFloat?
+    @State private var selectedAnnotationID: UUID?
+    @State private var showLabelEditor = false
+
+    private var activeLabel: AnnotationLabel? {
+        annotationStore.labels.first { $0.id == activeLabelID }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            // Label selector bar
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(annotationStore.labels) { label in
+                        Button {
+                            if let selID = selectedAnnotationID {
+                                annotationStore.updateAnnotation(selID, labelID: label.id)
+                                selectedAnnotationID = nil
+                            } else {
+                                activeLabelID = label.id
+                            }
+                        } label: {
+                            Text(label.name)
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule().fill(label.color.color.opacity(activeLabelID == label.id ? 0.4 : 0.15))
+                                )
+                                .overlay(
+                                    Capsule().stroke(label.color.color, lineWidth: activeLabelID == label.id ? 2 : 0.5)
+                                )
+                                .foregroundColor(label.color.color)
+                        }
+                    }
+
+                    Button {
+                        showLabelEditor = true
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.caption)
+                    }
+
+                    Spacer()
+
+                    if !annotationStore.annotations.isEmpty {
+                        Text("\(annotationStore.annotations.count) annotations")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            .background(Color(.systemGray6))
+
             // Waveform canvas
             GeometryReader { geo in
-                Canvas { context, size in
-                    drawWaveforms(context: context, size: size)
-                }
-                .gesture(
-                    DragGesture()
-                        .updating($dragStartTime) { _, state, _ in
-                            if state == nil { state = currentTime }
-                        }
-                        .onChanged { value in
-                            if let startTime = dragStartTime {
-                                // Pause playback if dragging while playing
-                                if isPlaying { stopPlayback() }
-                                let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
-                                currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
+                ZStack {
+                    Canvas { context, size in
+                        drawWaveforms(context: context, size: size)
+                    }
+                    .gesture(
+                        DragGesture()
+                            .updating($dragStartTime) { _, state, _ in
+                                if state == nil { state = currentTime }
                             }
-                        }
-                )
+                            .onChanged { value in
+                                if let startTime = dragStartTime {
+                                    if isPlaying { stopPlayback() }
+                                    let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
+                                    currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
+                                }
+                            }
+                    )
+
+                    // Pencil overlay (only captures pencil touches)
+                    PencilOverlayView(
+                        windowSec: windowSec,
+                        currentTime: currentTime,
+                        duration: edfData.duration,
+                        onDraw: { start, end in
+                            if let activeID = activeLabelID {
+                                annotationStore.addAnnotation(startTime: start, endTime: end, labelID: activeID)
+                            }
+                        },
+                        previewStart: $pencilPreviewStart,
+                        previewEnd: $pencilPreviewEnd
+                    )
+                    .allowsHitTesting(true)
+
+                    // Live preview rectangle while drawing
+                    if let ps = pencilPreviewStart, let pe = pencilPreviewEnd {
+                        let x = min(ps, pe)
+                        let w = abs(pe - ps)
+                        Rectangle()
+                            .fill(activeLabel?.color.color.opacity(0.3) ?? Color.red.opacity(0.3))
+                            .frame(width: w, height: geo.size.height)
+                            .position(x: x + w / 2, y: geo.size.height / 2)
+                            .allowsHitTesting(false)
+                    }
+                }
             }
 
             Divider()
@@ -49,12 +131,16 @@ struct WaveformView: View {
         }
         .onAppear {
             selectedChannels = Set(edfData.eegIndices)
+            activeLabelID = annotationStore.labels.first?.id
         }
         .onDisappear {
             stopPlayback()
         }
         .sheet(isPresented: $showChannelSelector) {
             channelSelectorSheet
+        }
+        .sheet(isPresented: $showLabelEditor) {
+            AnnotationLabelEditor(store: annotationStore)
         }
     }
 
@@ -157,6 +243,28 @@ struct WaveformView: View {
     private func drawWaveforms(context: GraphicsContext, size: CGSize) {
         // White background
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+
+        // Draw annotation regions (behind waveforms)
+        for annotation in annotationStore.annotations {
+            guard let label = annotationStore.label(for: annotation) else { continue }
+            let annStartPx = CGFloat(annotation.startTime - currentTime) / CGFloat(windowSec) * size.width
+            let annEndPx = CGFloat(annotation.endTime - currentTime) / CGFloat(windowSec) * size.width
+            guard annEndPx > 0 && annStartPx < size.width else { continue }
+
+            let clampedStart = max(0, annStartPx)
+            let clampedEnd = min(size.width, annEndPx)
+            let rect = CGRect(x: clampedStart, y: 0, width: clampedEnd - clampedStart, height: size.height)
+            context.fill(Path(rect), with: .color(label.color.color.opacity(0.2)))
+
+            // Label name at top of region
+            if clampedEnd - clampedStart > 30 {
+                context.draw(
+                    Text(label.name).font(.system(size: 9, weight: .medium)).foregroundColor(label.color.color),
+                    at: CGPoint(x: clampedStart + 4, y: 8),
+                    anchor: .topLeading
+                )
+            }
+        }
 
         let channels = selectedChannels.sorted()
         guard !channels.isEmpty else { return }
@@ -264,5 +372,94 @@ struct WaveformView: View {
         isPlaying = false
         timer?.cancel()
         timer = nil
+    }
+}
+
+// MARK: - Pencil Overlay
+
+struct PencilOverlayView: UIViewRepresentable {
+    let windowSec: Float
+    let currentTime: Float
+    let duration: Float
+    let onDraw: (Float, Float) -> Void
+    @Binding var previewStart: CGFloat?
+    @Binding var previewEnd: CGFloat?
+
+    func makeUIView(context: Context) -> PencilCaptureView {
+        let view = PencilCaptureView()
+        view.coordinator = context.coordinator
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = true
+        return view
+    }
+
+    func updateUIView(_ uiView: PencilCaptureView, context: Context) {
+        context.coordinator.windowSec = windowSec
+        context.coordinator.currentTime = currentTime
+        context.coordinator.duration = duration
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDraw: onDraw, previewStart: $previewStart, previewEnd: $previewEnd,
+                    windowSec: windowSec, currentTime: currentTime, duration: duration)
+    }
+
+    class Coordinator: NSObject {
+        let onDraw: (Float, Float) -> Void
+        var previewStart: Binding<CGFloat?>
+        var previewEnd: Binding<CGFloat?>
+        var windowSec: Float
+        var currentTime: Float
+        var duration: Float
+        private var startX: CGFloat?
+
+        init(onDraw: @escaping (Float, Float) -> Void, previewStart: Binding<CGFloat?>,
+             previewEnd: Binding<CGFloat?>, windowSec: Float, currentTime: Float, duration: Float) {
+            self.onDraw = onDraw; self.previewStart = previewStart; self.previewEnd = previewEnd
+            self.windowSec = windowSec; self.currentTime = currentTime; self.duration = duration
+        }
+
+        func pencilBegan(at x: CGFloat, width: CGFloat) {
+            startX = x
+            previewStart.wrappedValue = x
+            previewEnd.wrappedValue = x
+        }
+
+        func pencilMoved(to x: CGFloat, width: CGFloat) {
+            previewEnd.wrappedValue = x
+        }
+
+        func pencilEnded(at x: CGFloat, width: CGFloat) {
+            guard let sx = startX else { return }
+            let startFrac = Float(min(sx, x) / width)
+            let endFrac = Float(max(sx, x) / width)
+            let startTime = max(0, currentTime + startFrac * windowSec)
+            let endTime = min(duration, currentTime + endFrac * windowSec)
+            if endTime - startTime > 0.1 {
+                onDraw(startTime, endTime)
+            }
+            startX = nil
+            previewStart.wrappedValue = nil
+            previewEnd.wrappedValue = nil
+        }
+    }
+}
+
+class PencilCaptureView: UIView {
+    weak var coordinator: PencilOverlayView.Coordinator?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, touch.type == .pencil else { return }
+        coordinator?.pencilBegan(at: touch.location(in: self).x, width: bounds.width)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, touch.type == .pencil else { return }
+        coordinator?.pencilMoved(to: touch.location(in: self).x, width: bounds.width)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, touch.type == .pencil else { return }
+        coordinator?.pencilEnded(at: touch.location(in: self).x, width: bounds.width)
     }
 }
