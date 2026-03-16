@@ -350,7 +350,7 @@ struct SignalProcessor {
     /// Uses 2D electrode positions from Constants.electrodePositions2D.
     /// Must be called BEFORE average referencing to prevent bad channel noise from spreading.
     static func interpolateBadChannels(_ data: [[Float]], channels: [String], badChannelIndices: Set<Int>) -> [[Float]] {
-        guard !badChannelIndices.isEmpty else { return data }
+        guard !badChannelIndices.isEmpty, !data.isEmpty, channels.count == data.count else { return data }
         let nChannels = data.count
         let nSamples = data[0].count
         var result = data
