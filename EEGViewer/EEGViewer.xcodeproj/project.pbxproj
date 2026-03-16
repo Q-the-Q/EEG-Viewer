@@ -33,6 +33,7 @@
 		A10000024 /* ECGWaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000024; };
 		A10000025 /* HRVChartsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000025; };
 		A10000030 /* MetricInfoContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000030; };
+		A10000031 /* EEGAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000031; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +63,7 @@
 		A20000024 /* ECGWaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ECGWaveformView.swift; sourceTree = "<group>"; };
 		A20000025 /* HRVChartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HRVChartsView.swift; sourceTree = "<group>"; };
 		A20000030 /* MetricInfoContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricInfoContent.swift; sourceTree = "<group>"; };
+		A20000031 /* EEGAnnotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EEGAnnotation.swift; sourceTree = "<group>"; };
 		A30000001 /* EEGViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EEGViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -105,6 +107,7 @@
 				A20000006 /* SignalProcessor.swift */,
 				A20000007 /* QEEGAnalyzer.swift */,
 				A20000022 /* HRVAnalyzer.swift */,
+				A20000031 /* EEGAnnotation.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -251,6 +254,7 @@
 				A10000024 /* ECGWaveformView.swift in Sources */,
 				A10000025 /* HRVChartsView.swift in Sources */,
 				A10000030 /* MetricInfoContent.swift in Sources */,
+				A10000031 /* EEGAnnotation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
