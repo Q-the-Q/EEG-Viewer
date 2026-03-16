@@ -57,6 +57,7 @@ struct QEEGDashboard: View {
     let edfData: EDFData
     @ObservedObject var analyzer: QEEGAnalyzer
     let primaryFilename: String
+    @ObservedObject var annotationStore: AnnotationStore
     @StateObject private var comparisonManager = ComparisonManager()
     @State private var showComparisonPicker = false
     @State private var comparisonError: String?
@@ -220,7 +221,7 @@ struct QEEGDashboard: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename) }
+                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: annotationStore.excludedTimeRanges()) }
             } label: {
                 Label("Run qEEG Analysis", systemImage: "waveform.path.ecg")
                     .font(.title3)

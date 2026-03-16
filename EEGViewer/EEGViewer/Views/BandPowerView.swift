@@ -7,6 +7,7 @@ import Combine
 
 struct BandPowerView: View {
     let edfData: EDFData
+    @ObservedObject var annotationStore: AnnotationStore
 
     @State private var bandTraces: [(name: String, color: Color, data: [Float])] = []
     @State private var spectrogramData: SignalProcessor.SpectrogramResult?
@@ -149,9 +150,11 @@ struct BandPowerView: View {
 
         let eegData = edfData.eegData
         let sfreq = edfData.sfreq
+        let exclusions = annotationStore.excludedTimeRanges()
+        let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (traces, specResult, processedSfreq, specImg) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegData)
+            let referenced = SignalProcessor.averageReference(eegFiltered)
             let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
             // Decimate to 50 Hz for band analysis (1-25 Hz range)

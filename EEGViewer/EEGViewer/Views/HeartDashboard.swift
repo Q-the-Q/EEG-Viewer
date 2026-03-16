@@ -7,6 +7,7 @@ struct HeartDashboard: View {
     let edfData: EDFData
     @ObservedObject var analyzer: HRVAnalyzer
     let primaryFilename: String
+    @ObservedObject var annotationStore: AnnotationStore
 
     var body: some View {
         Group {

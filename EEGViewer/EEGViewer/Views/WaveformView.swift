@@ -7,6 +7,7 @@ import Combine
 
 struct WaveformView: View {
     let edfData: EDFData
+    @ObservedObject var annotationStore: AnnotationStore
 
     @State private var isPlaying = false
     @State private var currentTime: Float = 0

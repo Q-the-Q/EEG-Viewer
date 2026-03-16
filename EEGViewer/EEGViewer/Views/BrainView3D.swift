@@ -18,6 +18,7 @@ private struct GridCell: Hashable {
 
 struct BrainView3D: View {
     let edfData: EDFData
+    @ObservedObject var annotationStore: AnnotationStore
 
     // Scene state
     @State private var scene = SCNScene()
@@ -207,9 +208,11 @@ struct BrainView3D: View {
 
         let eegData = edfData.eegData
         let sfreq = edfData.sfreq
+        let exclusions = annotationStore.excludedTimeRanges()
+        let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (powerData, times) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegData)
+            let referenced = SignalProcessor.averageReference(eegFiltered)
             let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
             let decimFactor = max(1, Int(sfreq / 50.0))
