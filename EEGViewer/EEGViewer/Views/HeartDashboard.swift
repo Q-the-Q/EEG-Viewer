@@ -8,6 +8,7 @@ struct HeartDashboard: View {
     @ObservedObject var analyzer: HRVAnalyzer
     let primaryFilename: String
     @ObservedObject var annotationStore: AnnotationStore
+    @State private var applyAnnotations = true
 
     var body: some View {
         Group {
@@ -58,9 +59,23 @@ struct HeartDashboard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
+            // Annotation filter toggle
+            Button {
+                applyAnnotations.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    let count = annotationStore.excludedTimeRanges().count
+                    Text(applyAnnotations && count > 0 ? "\(count) annotations excluded" : "No annotation filter")
+                }
+                .font(.caption)
+                .foregroundColor(applyAnnotations ? .orange : .gray)
+            }
+
             Button {
                 Task {
-                    await analyzer.analyze(edfData: edfData, filename: primaryFilename)
+                    let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+                    await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions)
                 }
             } label: {
                 Label("Run Heart Analysis", systemImage: "heart.fill")

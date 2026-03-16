@@ -21,6 +21,7 @@ struct BandPowerView: View {
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
     @GestureState private var dragStartTime: Float?
+    @State private var applyAnnotations = true
 
     private let spectrogramMaxFreq: Float = 50.0
 
@@ -136,11 +137,29 @@ struct BandPowerView: View {
                         }
                     }
                 }
+
+                // Annotation filter toggle
+                annotationFilterToggle
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
         .background(Color(red: 0.06, green: 0.06, blue: 0.10))
+    }
+
+    private var annotationFilterToggle: some View {
+        Button {
+            applyAnnotations.toggle()
+            Task { await processData() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                let count = annotationStore.excludedTimeRanges().count
+                Text(applyAnnotations && count > 0 ? "\(count) excluded" : "No filter")
+            }
+            .font(.caption)
+            .foregroundColor(applyAnnotations ? .orange : .gray)
+        }
     }
 
     // MARK: - Data Processing
@@ -150,7 +169,7 @@ struct BandPowerView: View {
 
         let eegData = edfData.eegData
         let sfreq = edfData.sfreq
-        let exclusions = annotationStore.excludedTimeRanges()
+        let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
         let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (traces, specResult, processedSfreq, specImg) = await Task.detached(priority: .userInitiated) {

@@ -66,6 +66,7 @@ struct QEEGDashboard: View {
     @State private var selectedCoherenceBand: String = "Alpha"
     @State private var isLoadingComparison = false
     @State private var showDiff = false
+    @State private var applyAnnotations = true
 
     /// All available results: primary + comparisons + optional diff.
     /// Each entry includes a stable sessionID (nil for primary/diff) and isDiff flag.
@@ -103,8 +104,8 @@ struct QEEGDashboard: View {
             }
         }
         .sheet(isPresented: $showComparisonPicker) {
-            DocumentPicker { url in
-                loadComparisonFile(url: url)
+            DocumentPicker { tempURL, _ in
+                loadComparisonFile(url: tempURL)
             }
         }
         .alert("Comparison Error", isPresented: .init(
@@ -220,8 +221,22 @@ struct QEEGDashboard: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
 
+            // Annotation filter toggle
             Button {
-                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: annotationStore.excludedTimeRanges()) }
+                applyAnnotations.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    let count = annotationStore.excludedTimeRanges().count
+                    Text(applyAnnotations && count > 0 ? "\(count) annotations excluded" : "No annotation filter")
+                }
+                .font(.caption)
+                .foregroundColor(applyAnnotations ? .orange : .gray)
+            }
+
+            Button {
+                let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions) }
             } label: {
                 Label("Run qEEG Analysis", systemImage: "waveform.path.ecg")
                     .font(.title3)

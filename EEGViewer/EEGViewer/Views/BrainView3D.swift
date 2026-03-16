@@ -47,6 +47,7 @@ struct BrainView3D: View {
     @State private var isPlaying = false
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
+    @State private var applyAnnotations = true
 
     // Fixed region appearance
     private let regionBrightness: Float = 0.2
@@ -194,6 +195,20 @@ struct BrainView3D: View {
                     Text("+3").font(.caption2).foregroundColor(.gray)
                     Text("Z-score").font(.caption2).foregroundColor(.gray.opacity(0.6))
                 }
+
+                // Annotation filter toggle
+                Button {
+                    applyAnnotations.toggle()
+                    Task { await processAndBuild() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        let count = annotationStore.excludedTimeRanges().count
+                        Text(applyAnnotations && count > 0 ? "\(count) excluded" : "No filter")
+                    }
+                    .font(.caption)
+                    .foregroundColor(applyAnnotations ? .orange : .gray)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -208,7 +223,7 @@ struct BrainView3D: View {
 
         let eegData = edfData.eegData
         let sfreq = edfData.sfreq
-        let exclusions = annotationStore.excludedTimeRanges()
+        let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
         let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (powerData, times) = await Task.detached(priority: .userInitiated) {

@@ -56,8 +56,8 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showFilePicker) {
-                DocumentPicker { url in
-                    loadFile(url: url)
+                DocumentPicker { tempURL, originalURL in
+                    loadFile(tempURL: tempURL, originalURL: originalURL)
                 }
             }
             .alert("Error", isPresented: .init(
@@ -96,13 +96,13 @@ struct ContentView: View {
         }
     }
 
-    private func loadFile(url: URL) {
+    private func loadFile(tempURL: URL, originalURL: URL) {
         do {
-            let data = try EDFReader.read(url: url)
+            let data = try EDFReader.read(url: tempURL)
             self.edfData = data
-            self.loadedFileURL = url
-            self.annotationStore.load(for: url)
-            self.loadedFilename = url.lastPathComponent
+            self.loadedFileURL = originalURL
+            self.annotationStore.load(for: originalURL)
+            self.loadedFilename = originalURL.lastPathComponent
             self.errorMessage = nil
             // Reset analyzers so stale results from previous file are cleared
             self.analyzer.results = nil
@@ -119,8 +119,10 @@ struct ContentView: View {
 
 // MARK: - Document Picker
 
+/// Document picker that returns both a temp copy (for reading) and the original URL (for sidecar persistence).
 struct DocumentPicker: UIViewControllerRepresentable {
-    let onPick: (URL) -> Void
+    /// Callback: (tempURL for reading, originalURL for annotation sidecar)
+    let onPick: (URL, URL) -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.data])
@@ -136,9 +138,9 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
+        let onPick: (URL, URL) -> Void
 
-        init(onPick: @escaping (URL) -> Void) {
+        init(onPick: @escaping (URL, URL) -> Void) {
             self.onPick = onPick
         }
 
@@ -148,12 +150,12 @@ struct DocumentPicker: UIViewControllerRepresentable {
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-            // Copy to temp location for reliable access
+            // Copy to temp location for reliable EDF reading
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
             try? FileManager.default.removeItem(at: tempURL)
             try? FileManager.default.copyItem(at: url, to: tempURL)
 
-            onPick(tempURL)
+            onPick(tempURL, url)
         }
     }
 }

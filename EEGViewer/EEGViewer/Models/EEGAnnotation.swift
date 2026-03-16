@@ -84,6 +84,7 @@ struct EEGAnnotation: Identifiable, Codable, Equatable {
 struct AnnotationFile: Codable {
     var labels: [AnnotationLabel]
     var annotations: [EEGAnnotation]
+    var badChannelIndices: Set<Int>?  // optional for backward compat with existing JSON
 }
 
 // MARK: - AnnotationStore
@@ -92,6 +93,7 @@ struct AnnotationFile: Codable {
 class AnnotationStore: ObservableObject {
     @Published var labels: [AnnotationLabel]
     @Published var annotations: [EEGAnnotation]
+    @Published var badChannelIndices: Set<Int> = []
     private(set) var currentURL: URL?
 
     init() {
@@ -123,45 +125,87 @@ class AnnotationStore: ObservableObject {
 
     // MARK: Persistence
 
-    /// Returns the annotation file URL corresponding to a given EDF file URL.
+    /// Returns the annotation file URL corresponding to a given EDF file URL (sidecar next to EDF).
     static func annotationURL(for edfURL: URL) -> URL {
         edfURL.deletingPathExtension().appendingPathExtension("annotations.json")
     }
 
-    /// Loads annotations for the given EDF file, or resets to defaults if none exist.
-    func load(for edfURL: URL) {
-        let url = Self.annotationURL(for: edfURL)
-        currentURL = edfURL
+    /// Returns a fallback URL in App Support for when sidecar writing is not permitted (e.g., iPad sandbox).
+    static func fallbackURL(for edfURL: URL) -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let annotDir = appSupport.appendingPathComponent("Annotations", isDirectory: true)
+        try? FileManager.default.createDirectory(at: annotDir, withIntermediateDirectories: true)
+        let baseName = edfURL.deletingPathExtension().lastPathComponent
+        return annotDir.appendingPathComponent("\(baseName).annotations.json")
+    }
 
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            labels = Self.defaultLabels()
-            annotations = []
-            return
-        }
-
+    /// Loads annotation data from a specific file URL.
+    private func loadFromURL(_ url: URL) {
         do {
             let data = try Data(contentsOf: url)
             let file = try JSONDecoder().decode(AnnotationFile.self, from: data)
             labels = file.labels
             annotations = file.annotations
+            badChannelIndices = file.badChannelIndices ?? []
         } catch {
             print("AnnotationStore: failed to load \(url.lastPathComponent): \(error)")
             labels = Self.defaultLabels()
             annotations = []
+            badChannelIndices = []
         }
     }
 
-    /// Saves current labels and annotations to the JSON file.
+    /// Loads annotations for the given EDF file (original security-scoped URL), or resets to defaults if none exist.
+    func load(for edfURL: URL) {
+        currentURL = edfURL
+        let url = Self.annotationURL(for: edfURL)
+
+        // Security-scoped access for reading from the original file location
+        let accessing = edfURL.startAccessingSecurityScopedResource()
+        defer { if accessing { edfURL.stopAccessingSecurityScopedResource() } }
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            // Try App Support fallback (iPad may have saved here)
+            let fallback = Self.fallbackURL(for: edfURL)
+            if FileManager.default.fileExists(atPath: fallback.path) {
+                loadFromURL(fallback)
+            } else {
+                labels = Self.defaultLabels()
+                annotations = []
+                badChannelIndices = []
+            }
+            return
+        }
+
+        loadFromURL(url)
+    }
+
+    /// Saves current labels, annotations, and bad channels to JSON.
+    /// Tries sidecar next to EDF first; falls back to App Support if permission denied (iPad).
     func save() {
         guard let edfURL = currentURL else { return }
-        let url = Self.annotationURL(for: edfURL)
-        let file = AnnotationFile(labels: labels, annotations: annotations)
+        let file = AnnotationFile(labels: labels, annotations: annotations, badChannelIndices: badChannelIndices)
 
         do {
-            let data = try JSONEncoder().encode(file)
-            try data.write(to: url, options: .atomic)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(file)
+
+            // Try writing next to the original EDF (works on Mac, may fail on iPad)
+            let sidecarURL = Self.annotationURL(for: edfURL)
+            let accessing = edfURL.startAccessingSecurityScopedResource()
+            defer { if accessing { edfURL.stopAccessingSecurityScopedResource() } }
+
+            do {
+                try data.write(to: sidecarURL, options: .atomic)
+            } catch {
+                // Sidecar write failed (likely iPad sandbox) — fall back to App Support
+                let fallbackURL = Self.fallbackURL(for: edfURL)
+                try data.write(to: fallbackURL, options: .atomic)
+                print("AnnotationStore: saved to App Support fallback (sidecar write failed: \(error.localizedDescription))")
+            }
         } catch {
-            print("AnnotationStore: failed to save \(url.lastPathComponent): \(error)")
+            print("AnnotationStore: failed to save: \(error)")
         }
     }
 
@@ -196,7 +240,33 @@ class AnnotationStore: ObservableObject {
         return groups
     }
 
+    // MARK: Import
+
+    /// Imports annotations from an external JSON file (e.g., created on Mac, imported on iPad).
+    func importFromFile(_ url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let file = try JSONDecoder().decode(AnnotationFile.self, from: data)
+            labels = file.labels
+            annotations = file.annotations
+            badChannelIndices = file.badChannelIndices ?? []
+            save()  // re-save to local persistence
+        } catch {
+            print("AnnotationStore: failed to import from \(url.lastPathComponent): \(error)")
+        }
+    }
+
     // MARK: Mutation Helpers
+
+    /// Toggles a channel's bad status and saves.
+    func toggleBadChannel(_ index: Int) {
+        if badChannelIndices.contains(index) {
+            badChannelIndices.remove(index)
+        } else {
+            badChannelIndices.insert(index)
+        }
+        save()
+    }
 
     /// Adds a new annotation and saves.
     func addAnnotation(startTime: Float, endTime: Float, labelID: UUID) {

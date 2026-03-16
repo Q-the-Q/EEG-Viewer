@@ -19,11 +19,26 @@ struct WaveformView: View {
     @State private var timer: AnyCancellable?
     @GestureState private var dragStartTime: Float?
     @State private var activeLabelID: UUID?
-    @State private var pencilPreviewStart: CGFloat?
-    @State private var pencilPreviewEnd: CGFloat?
     @State private var selectedAnnotationID: UUID?
     @State private var showLabelEditor = false
-    @State private var badChannelIndices: Set<Int> = []
+    // badChannelIndices stored in annotationStore for JSON persistence
+
+    // Annotation creation via long press + drag
+    @State private var annotationDragStart: CGFloat?
+    @State private var annotationDragEnd: CGFloat?
+    @State private var isCreatingAnnotation = false
+
+    // Annotation edge resizing
+    @State private var resizingAnnotationID: UUID?
+    @State private var resizingEdge: AnnotationEdge?
+    @State private var resizeStartX: CGFloat?
+
+    private enum AnnotationEdge { case leading, trailing }
+
+    // Edit popover for long press on existing annotation
+    @State private var showAnnotationEditPopover = false
+    @State private var showAnnotationImporter = false
+    @State private var editingAnnotationID: UUID?
 
     private var activeLabel: AnnotationLabel? {
         annotationStore.labels.first { $0.id == activeLabelID }
@@ -64,6 +79,13 @@ struct WaveformView: View {
                             .font(.caption)
                     }
 
+                    Button {
+                        showAnnotationImporter = true
+                    } label: {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                            .font(.caption)
+                    }
+
                     Spacer()
 
                     if !annotationStore.annotations.isEmpty {
@@ -79,12 +101,12 @@ struct WaveformView: View {
 
             // Waveform canvas
             GeometryReader { geo in
-                ZStack {
+                ZStack(alignment: .topLeading) {
                     Canvas { context, size in
                         drawWaveforms(context: context, size: size)
                     }
+                    .contentShape(Rectangle())
                     .onTapGesture { location in
-                        // Check if tap lands on an existing annotation
                         let tapTime = currentTime + Float(location.x / geo.size.width) * windowSec
                         if let tapped = annotationStore.annotations.first(where: {
                             tapTime >= $0.startTime && tapTime <= $0.endTime
@@ -95,36 +117,12 @@ struct WaveformView: View {
                         }
                     }
                     .gesture(
-                        DragGesture()
-                            .updating($dragStartTime) { _, state, _ in
-                                if state == nil { state = currentTime }
-                            }
-                            .onChanged { value in
-                                if let startTime = dragStartTime {
-                                    if isPlaying { stopPlayback() }
-                                    let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
-                                    currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
-                                }
-                            }
+                        longPressAnnotationGesture(in: geo)
+                            .exclusively(before: scrubGesture(in: geo))
                     )
 
-                    // Pencil overlay (only captures pencil touches)
-                    PencilOverlayView(
-                        windowSec: windowSec,
-                        currentTime: currentTime,
-                        duration: edfData.duration,
-                        onDraw: { start, end in
-                            if let activeID = activeLabelID {
-                                annotationStore.addAnnotation(startTime: start, endTime: end, labelID: activeID)
-                            }
-                        },
-                        previewStart: $pencilPreviewStart,
-                        previewEnd: $pencilPreviewEnd
-                    )
-                    .allowsHitTesting(true)
-
-                    // Live preview rectangle while drawing
-                    if let ps = pencilPreviewStart, let pe = pencilPreviewEnd {
+                    // Live preview rectangle while creating annotation
+                    if let ps = annotationDragStart, let pe = annotationDragEnd {
                         let x = min(ps, pe)
                         let w = abs(pe - ps)
                         Rectangle()
@@ -133,7 +131,24 @@ struct WaveformView: View {
                             .position(x: x + w / 2, y: geo.size.height / 2)
                             .allowsHitTesting(false)
                     }
+
+                    // Drag handles on selected annotation (overlay approach avoids .position() hit-test issues)
+                    if let selID = selectedAnnotationID,
+                       let annotation = annotationStore.annotations.first(where: { $0.id == selID }) {
+                        let startPx = CGFloat(annotation.startTime - currentTime) / CGFloat(windowSec) * geo.size.width
+                        let endPx = CGFloat(annotation.endTime - currentTime) / CGFloat(windowSec) * geo.size.width
+
+                        // Leading handle
+                        if startPx > -20 && startPx < geo.size.width + 20 {
+                            annotationHandle(edge: .leading, annotationID: selID, offsetX: startPx - 22, height: geo.size.height, geoWidth: geo.size.width)
+                        }
+                        // Trailing handle
+                        if endPx > -20 && endPx < geo.size.width + 20 {
+                            annotationHandle(edge: .trailing, annotationID: selID, offsetX: endPx - 22, height: geo.size.height, geoWidth: geo.size.width)
+                        }
+                    }
                 }
+                .coordinateSpace(name: "waveformArea")
             }
 
             Divider()
@@ -154,6 +169,164 @@ struct WaveformView: View {
         .sheet(isPresented: $showLabelEditor) {
             AnnotationLabelEditor(store: annotationStore)
         }
+        .popover(isPresented: $showAnnotationEditPopover) {
+            annotationEditMenu
+        }
+        .sheet(isPresented: $showAnnotationImporter) {
+            AnnotationImportPicker { url in
+                annotationStore.importFromFile(url)
+            }
+        }
+    }
+
+    // MARK: - Gestures
+
+    /// Regular drag gesture for scrubbing through the recording
+    private func scrubGesture(in geo: GeometryProxy) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .updating($dragStartTime) { _, state, _ in
+                if state == nil { state = currentTime }
+            }
+            .onChanged { value in
+                guard !isCreatingAnnotation else { return }
+                if let startTime = dragStartTime {
+                    if isPlaying { stopPlayback() }
+                    let dt = Float(value.translation.width) / Float(geo.size.width) * windowSec
+                    currentTime = max(0, min(edfData.duration - windowSec, startTime - dt))
+                }
+            }
+    }
+
+    /// Long press followed by drag to create an annotation
+    private func longPressAnnotationGesture(in geo: GeometryProxy) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.4)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                switch value {
+                case .second(true, let drag):
+                    guard let drag = drag else { return }
+                    if !isCreatingAnnotation {
+                        // Check if long press landed on an existing annotation
+                        let pressTime = currentTime + Float(drag.startLocation.x / geo.size.width) * windowSec
+                        if let existing = annotationStore.annotations.first(where: {
+                            pressTime >= $0.startTime && pressTime <= $0.endTime
+                        }) {
+                            // Long press on existing annotation → show edit menu
+                            editingAnnotationID = existing.id
+                            selectedAnnotationID = existing.id
+                            showAnnotationEditPopover = true
+                            return
+                        }
+                        isCreatingAnnotation = true
+                        annotationDragStart = drag.startLocation.x
+                    }
+                    annotationDragEnd = drag.location.x
+                default:
+                    break
+                }
+            }
+            .onEnded { value in
+                defer {
+                    isCreatingAnnotation = false
+                    annotationDragStart = nil
+                    annotationDragEnd = nil
+                }
+                guard case .second(true, let drag) = value, let drag = drag else { return }
+                guard isCreatingAnnotation else { return }
+                let startX = min(drag.startLocation.x, drag.location.x)
+                let endX = max(drag.startLocation.x, drag.location.x)
+                let startFrac = Float(startX / geo.size.width)
+                let endFrac = Float(endX / geo.size.width)
+                let startTime = max(0, currentTime + startFrac * windowSec)
+                let endTime = min(edfData.duration, currentTime + endFrac * windowSec)
+                if endTime - startTime > 0.1, let activeID = activeLabelID {
+                    annotationStore.addAnnotation(startTime: startTime, endTime: endTime, labelID: activeID)
+                }
+            }
+    }
+
+    // MARK: - Annotation Drag Handles
+
+    @ViewBuilder
+    private func annotationHandle(edge: AnnotationEdge, annotationID: UUID, offsetX: CGFloat, height: CGFloat, geoWidth: CGFloat) -> some View {
+        // 44pt wide invisible touch target, 6pt visible bar, positioned via offset from top-leading
+        VStack {
+            Spacer()
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.accentColor)
+                .frame(width: 6, height: 48)
+            Spacer()
+        }
+        .frame(width: 44, height: height)
+        .contentShape(Rectangle())
+        .offset(x: offsetX)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named("waveformArea"))
+                .onChanged { value in
+                    guard let annotation = annotationStore.annotations.first(where: { $0.id == annotationID }) else { return }
+                    let newTime = currentTime + Float(value.location.x / geoWidth) * windowSec
+                    let clampedTime = max(0, min(edfData.duration, newTime))
+                    switch edge {
+                    case .leading:
+                        if clampedTime < annotation.endTime - 0.1 {
+                            annotationStore.updateAnnotation(annotationID, startTime: clampedTime)
+                        }
+                    case .trailing:
+                        if clampedTime > annotation.startTime + 0.1 {
+                            annotationStore.updateAnnotation(annotationID, endTime: clampedTime)
+                        }
+                    }
+                }
+        )
+    }
+
+    // MARK: - Annotation Edit Menu
+
+    private var annotationEditMenu: some View {
+        VStack(spacing: 12) {
+            if let editID = editingAnnotationID,
+               let annotation = annotationStore.annotations.first(where: { $0.id == editID }),
+               let label = annotationStore.label(for: annotation) {
+                Text(label.name)
+                    .font(.headline)
+
+                Text(String(format: "%.1fs – %.1fs (%.1fs)", annotation.startTime, annotation.endTime, annotation.endTime - annotation.startTime))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                Text("Change label:")
+                    .font(.caption.bold())
+                ForEach(annotationStore.labels) { lbl in
+                    Button {
+                        annotationStore.updateAnnotation(editID, labelID: lbl.id)
+                        showAnnotationEditPopover = false
+                    } label: {
+                        HStack {
+                            Circle().fill(lbl.color.color).frame(width: 12, height: 12)
+                            Text(lbl.name)
+                            if lbl.id == label.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    annotationStore.removeAnnotation(editID)
+                    selectedAnnotationID = nil
+                    editingAnnotationID = nil
+                    showAnnotationEditPopover = false
+                } label: {
+                    Label("Delete Annotation", systemImage: "trash")
+                }
+            }
+        }
+        .padding()
+        .frame(minWidth: 200)
     }
 
     // MARK: - Controls
@@ -161,6 +334,15 @@ struct WaveformView: View {
     private var controlsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
+                // Channel selector button (prominent, always visible)
+                Button {
+                    showChannelSelector = true
+                } label: {
+                    Label("Channels", systemImage: "list.bullet")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+
                 // Play/Pause
                 Button {
                     togglePlayback()
@@ -214,13 +396,6 @@ struct WaveformView: View {
                     }
                 }
 
-                // Channel selector button
-                Button {
-                    showChannelSelector = true
-                } label: {
-                    Label("Channels", systemImage: "list.bullet")
-                        .font(.caption)
-                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -238,27 +413,58 @@ struct WaveformView: View {
     private var channelSelectorSheet: some View {
         NavigationStack {
             List {
-                ForEach(0..<edfData.nChannels, id: \.self) { idx in
-                    HStack {
-                        Toggle(edfData.channelNames[idx], isOn: Binding(
-                            get: { selectedChannels.contains(idx) },
-                            set: { if $0 { selectedChannels.insert(idx) } else { selectedChannels.remove(idx) } }
-                        ))
+                // Bad channel instruction section
+                if !annotationStore.badChannelIndices.isEmpty {
+                    Section {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            Text("\(annotationStore.badChannelIndices.count) bad channel\(annotationStore.badChannelIndices.count == 1 ? "" : "s") marked")
+                                .font(.subheadline.bold())
+                        }
+                        Text("Bad channels are interpolated (distance-weighted average from neighboring electrodes) before analysis. They appear with a red trace in the waveform view.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
-                        // Bad channel marker (EEG channels only)
-                        if edfData.eegIndices.contains(idx) {
-                            Button {
-                                if badChannelIndices.contains(idx) {
-                                    badChannelIndices.remove(idx)
-                                } else {
-                                    badChannelIndices.insert(idx)
+                Section {
+                    Text("Tap the warning icon to mark noisy or flat channels as bad. Bad channels will be spatially interpolated before average referencing in the qEEG analysis pipeline.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Channels") {
+                    ForEach(0..<edfData.nChannels, id: \.self) { idx in
+                        HStack {
+                            Toggle(isOn: Binding(
+                                get: { selectedChannels.contains(idx) },
+                                set: { if $0 { selectedChannels.insert(idx) } else { selectedChannels.remove(idx) } }
+                            )) {
+                                HStack {
+                                    Text(edfData.channelNames[idx])
+                                        .foregroundColor(annotationStore.badChannelIndices.contains(idx) ? .red : .primary)
+                                    if annotationStore.badChannelIndices.contains(idx) {
+                                        Text("BAD")
+                                            .font(.caption2.bold())
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(Capsule().fill(.red))
+                                    }
                                 }
-                            } label: {
-                                Image(systemName: badChannelIndices.contains(idx) ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
-                                    .foregroundColor(badChannelIndices.contains(idx) ? .red : .gray)
-                                    .font(.caption)
                             }
-                            .buttonStyle(.borderless)
+
+                            // Bad channel marker (EEG channels only)
+                            if edfData.eegIndices.contains(idx) {
+                                Button {
+                                    annotationStore.toggleBadChannel(idx)
+                                } label: {
+                                    Image(systemName: annotationStore.badChannelIndices.contains(idx) ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
+                                        .foregroundColor(annotationStore.badChannelIndices.contains(idx) ? .red : .gray)
+                                }
+                                .buttonStyle(.borderless)
+                            }
                         }
                     }
                 }
@@ -388,7 +594,8 @@ struct WaveformView: View {
                 }
             }
 
-            context.stroke(path, with: .color(Constants.waveformLineColor), lineWidth: 1.0)
+            let lineColor = annotationStore.badChannelIndices.contains(chIdx) ? Color.red.opacity(0.5) : Constants.waveformLineColor
+            context.stroke(path, with: .color(lineColor), lineWidth: annotationStore.badChannelIndices.contains(chIdx) ? 1.5 : 1.0)
         }
     }
 
@@ -422,91 +629,44 @@ struct WaveformView: View {
     }
 }
 
-// MARK: - Pencil Overlay
+// MARK: - Annotation Import Picker
 
-struct PencilOverlayView: UIViewRepresentable {
-    let windowSec: Float
-    let currentTime: Float
-    let duration: Float
-    let onDraw: (Float, Float) -> Void
-    @Binding var previewStart: CGFloat?
-    @Binding var previewEnd: CGFloat?
+/// Document picker specifically for importing .annotations.json files.
+struct AnnotationImportPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
 
-    func makeUIView(context: Context) -> PencilCaptureView {
-        let view = PencilCaptureView()
-        view.coordinator = context.coordinator
-        view.backgroundColor = .clear
-        view.isUserInteractionEnabled = true
-        return view
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json])
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
     }
 
-    func updateUIView(_ uiView: PencilCaptureView, context: Context) {
-        context.coordinator.windowSec = windowSec
-        context.coordinator.currentTime = currentTime
-        context.coordinator.duration = duration
-    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDraw: onDraw, previewStart: $previewStart, previewEnd: $previewEnd,
-                    windowSec: windowSec, currentTime: currentTime, duration: duration)
+        Coordinator(onPick: onPick)
     }
 
-    class Coordinator: NSObject {
-        let onDraw: (Float, Float) -> Void
-        var previewStart: Binding<CGFloat?>
-        var previewEnd: Binding<CGFloat?>
-        var windowSec: Float
-        var currentTime: Float
-        var duration: Float
-        private var startX: CGFloat?
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
 
-        init(onDraw: @escaping (Float, Float) -> Void, previewStart: Binding<CGFloat?>,
-             previewEnd: Binding<CGFloat?>, windowSec: Float, currentTime: Float, duration: Float) {
-            self.onDraw = onDraw; self.previewStart = previewStart; self.previewEnd = previewEnd
-            self.windowSec = windowSec; self.currentTime = currentTime; self.duration = duration
+        init(onPick: @escaping (URL) -> Void) {
+            self.onPick = onPick
         }
 
-        func pencilBegan(at x: CGFloat, width: CGFloat) {
-            startX = x
-            previewStart.wrappedValue = x
-            previewEnd.wrappedValue = x
-        }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-        func pencilMoved(to x: CGFloat, width: CGFloat) {
-            previewEnd.wrappedValue = x
-        }
+            // Copy to temp for reliable reading
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
+            try? FileManager.default.removeItem(at: tempURL)
+            try? FileManager.default.copyItem(at: url, to: tempURL)
 
-        func pencilEnded(at x: CGFloat, width: CGFloat) {
-            guard let sx = startX else { return }
-            let startFrac = Float(min(sx, x) / width)
-            let endFrac = Float(max(sx, x) / width)
-            let startTime = max(0, currentTime + startFrac * windowSec)
-            let endTime = min(duration, currentTime + endFrac * windowSec)
-            if endTime - startTime > 0.1 {
-                onDraw(startTime, endTime)
-            }
-            startX = nil
-            previewStart.wrappedValue = nil
-            previewEnd.wrappedValue = nil
+            onPick(tempURL)
         }
     }
 }
 
-class PencilCaptureView: UIView {
-    weak var coordinator: PencilOverlayView.Coordinator?
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, touch.type == .pencil else { return }
-        coordinator?.pencilBegan(at: touch.location(in: self).x, width: bounds.width)
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, touch.type == .pencil else { return }
-        coordinator?.pencilMoved(to: touch.location(in: self).x, width: bounds.width)
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, touch.type == .pencil else { return }
-        coordinator?.pencilEnded(at: touch.location(in: self).x, width: bounds.width)
-    }
-}
