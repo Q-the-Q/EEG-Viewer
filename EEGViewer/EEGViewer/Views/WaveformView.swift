@@ -23,6 +23,7 @@ struct WaveformView: View {
     @State private var pencilPreviewEnd: CGFloat?
     @State private var selectedAnnotationID: UUID?
     @State private var showLabelEditor = false
+    @State private var badChannelIndices: Set<Int> = []
 
     private var activeLabel: AnnotationLabel? {
         annotationStore.labels.first { $0.id == activeLabelID }
@@ -81,6 +82,17 @@ struct WaveformView: View {
                 ZStack {
                     Canvas { context, size in
                         drawWaveforms(context: context, size: size)
+                    }
+                    .onTapGesture { location in
+                        // Check if tap lands on an existing annotation
+                        let tapTime = currentTime + Float(location.x / geo.size.width) * windowSec
+                        if let tapped = annotationStore.annotations.first(where: {
+                            tapTime >= $0.startTime && tapTime <= $0.endTime
+                        }) {
+                            selectedAnnotationID = (selectedAnnotationID == tapped.id) ? nil : tapped.id
+                        } else {
+                            selectedAnnotationID = nil
+                        }
                     }
                     .gesture(
                         DragGesture()
@@ -189,6 +201,19 @@ struct WaveformView: View {
                 }
                 .pickerStyle(.menu)
 
+                // Delete selected annotation
+                if selectedAnnotationID != nil {
+                    Button(role: .destructive) {
+                        if let id = selectedAnnotationID {
+                            annotationStore.removeAnnotation(id)
+                            selectedAnnotationID = nil
+                        }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                            .font(.caption)
+                    }
+                }
+
                 // Channel selector button
                 Button {
                     showChannelSelector = true
@@ -214,10 +239,28 @@ struct WaveformView: View {
         NavigationStack {
             List {
                 ForEach(0..<edfData.nChannels, id: \.self) { idx in
-                    Toggle(edfData.channelNames[idx], isOn: Binding(
-                        get: { selectedChannels.contains(idx) },
-                        set: { if $0 { selectedChannels.insert(idx) } else { selectedChannels.remove(idx) } }
-                    ))
+                    HStack {
+                        Toggle(edfData.channelNames[idx], isOn: Binding(
+                            get: { selectedChannels.contains(idx) },
+                            set: { if $0 { selectedChannels.insert(idx) } else { selectedChannels.remove(idx) } }
+                        ))
+
+                        // Bad channel marker (EEG channels only)
+                        if edfData.eegIndices.contains(idx) {
+                            Button {
+                                if badChannelIndices.contains(idx) {
+                                    badChannelIndices.remove(idx)
+                                } else {
+                                    badChannelIndices.insert(idx)
+                                }
+                            } label: {
+                                Image(systemName: badChannelIndices.contains(idx) ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
+                                    .foregroundColor(badChannelIndices.contains(idx) ? .red : .gray)
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
                 }
             }
             .navigationTitle("Channels")
@@ -254,7 +297,11 @@ struct WaveformView: View {
             let clampedStart = max(0, annStartPx)
             let clampedEnd = min(size.width, annEndPx)
             let rect = CGRect(x: clampedStart, y: 0, width: clampedEnd - clampedStart, height: size.height)
-            context.fill(Path(rect), with: .color(label.color.color.opacity(0.2)))
+            let isSelected = annotation.id == selectedAnnotationID
+            context.fill(Path(rect), with: .color(label.color.color.opacity(isSelected ? 0.35 : 0.2)))
+            if isSelected {
+                context.stroke(Path(rect), with: .color(label.color.color), lineWidth: 2)
+            }
 
             // Label name at top of region
             if clampedEnd - clampedStart > 30 {
