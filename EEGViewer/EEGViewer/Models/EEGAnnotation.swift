@@ -2,6 +2,7 @@
 // Data model and persistence for EEG waveform annotations.
 
 import SwiftUI
+import UIKit
 
 // MARK: - CodableColor
 
