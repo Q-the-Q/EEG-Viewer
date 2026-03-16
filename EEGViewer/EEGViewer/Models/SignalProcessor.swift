@@ -290,6 +290,114 @@ struct SignalProcessor {
         return (cleanData, stats)
     }
 
+    // MARK: - Annotation-Based Exclusion
+
+    /// Remove excluded time ranges from multi-channel data.
+    /// Merges overlapping ranges, then concatenates non-excluded segments.
+    static func applyExclusions(_ data: [[Float]], sfreq: Float, exclusions: [(start: Float, end: Float)]) -> [[Float]] {
+        guard !exclusions.isEmpty, let firstChannel = data.first else { return data }
+        let totalSamples = firstChannel.count
+        let nChannels = data.count
+
+        // Sort and merge overlapping exclusion ranges
+        let sorted = exclusions.sorted { $0.start < $1.start }
+        var merged = [(start: Int, end: Int)]()
+        for ex in sorted {
+            let s = max(0, Int(ex.start * sfreq))
+            let e = min(totalSamples, Int(ex.end * sfreq))
+            guard s < e else { continue }
+            if let last = merged.last, s <= last.end {
+                merged[merged.count - 1] = (start: last.start, end: max(last.end, e))
+            } else {
+                merged.append((start: s, end: e))
+            }
+        }
+
+        // Build included (non-excluded) ranges
+        var included = [(start: Int, end: Int)]()
+        var pos = 0
+        for ex in merged {
+            if pos < ex.start {
+                included.append((start: pos, end: ex.start))
+            }
+            pos = ex.end
+        }
+        if pos < totalSamples {
+            included.append((start: pos, end: totalSamples))
+        }
+
+        guard !included.isEmpty else { return data.map { _ in [Float]() } }
+
+        // Concatenate included segments
+        let totalIncluded = included.reduce(0) { $0 + ($1.end - $1.start) }
+        var result = [[Float]](repeating: [Float](repeating: 0, count: totalIncluded), count: nChannels)
+        var writePos = 0
+        for range in included {
+            let count = range.end - range.start
+            for ch in 0..<nChannels {
+                result[ch].replaceSubrange(writePos..<writePos + count,
+                                            with: data[ch][range.start..<range.end])
+            }
+            writePos += count
+        }
+
+        return result
+    }
+
+    // MARK: - Bad Channel Interpolation
+
+    /// Replace bad channel data with distance-weighted spatial interpolation from neighbors.
+    /// Uses 2D electrode positions from Constants.electrodePositions2D.
+    /// Must be called BEFORE average referencing to prevent bad channel noise from spreading.
+    static func interpolateBadChannels(_ data: [[Float]], channels: [String], badChannelIndices: Set<Int>) -> [[Float]] {
+        guard !badChannelIndices.isEmpty else { return data }
+        let nChannels = data.count
+        let nSamples = data[0].count
+        var result = data
+
+        for badIdx in badChannelIndices {
+            guard badIdx < nChannels else { continue }
+            let badName = channels[badIdx]
+            guard let badPos = Constants.electrodePositions2D[badName] else { continue }
+
+            // Compute inverse-distance weights from all good channels that have positions
+            var weights = [Float]()
+            var goodIndices = [Int]()
+            for ch in 0..<nChannels {
+                guard !badChannelIndices.contains(ch) else { continue }
+                let chName = channels[ch]
+                guard let chPos = Constants.electrodePositions2D[chName] else { continue }
+                let dx = badPos.x - chPos.x
+                let dy = badPos.y - chPos.y
+                let dist = sqrtf(dx * dx + dy * dy)
+                guard dist > 1e-6 else { continue }
+                // Inverse-distance squared weighting (closer neighbors contribute more)
+                let w = 1.0 / (dist * dist)
+                weights.append(w)
+                goodIndices.append(ch)
+            }
+
+            guard !weights.isEmpty else { continue }
+
+            // Normalize weights
+            let totalWeight = weights.reduce(0, +)
+            let normalizedWeights = weights.map { $0 / totalWeight }
+
+            // Interpolate sample-by-sample using vDSP for performance
+            var interpolated = [Float](repeating: 0, count: nSamples)
+            for (i, goodIdx) in goodIndices.enumerated() {
+                var w = normalizedWeights[i]
+                var scaled = [Float](repeating: 0, count: nSamples)
+                vDSP_vsmul(data[goodIdx], 1, &w, &scaled, 1, vDSP_Length(nSamples))
+                vDSP_vadd(interpolated, 1, scaled, 1, &interpolated, 1, vDSP_Length(nSamples))
+            }
+
+            result[badIdx] = interpolated
+        }
+
+        return result
+    }
+
     // MARK: - Z-Scores (Within-Subject)
 
     /// Compute within-subject Z-scores: (value - mean) / std across channels.
