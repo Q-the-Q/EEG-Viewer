@@ -390,6 +390,12 @@ struct WaveformView: View {
                     ForEach(Constants.windowSizeOptions, id: \.self) { ws in
                         Text("\(Int(ws))s").tag(ws)
                     }
+                    let halfDur = (edfData.duration / 2).rounded()
+                    let fullDur = edfData.duration.rounded()
+                    if halfDur > Constants.windowSizeOptions.last ?? 0 {
+                        Text("Half").tag(halfDur)
+                    }
+                    Text("All").tag(fullDur)
                 }
                 .pickerStyle(.menu)
 

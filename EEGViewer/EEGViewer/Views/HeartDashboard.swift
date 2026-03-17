@@ -84,12 +84,13 @@ struct HeartDashboard: View {
                         .foregroundColor(notchEnabled ? .cyan : .gray)
                 }
                 if notchEnabled {
-                    Text("\(Int(notchFreq))Hz notch")
-                        .font(.caption)
-                        .foregroundColor(.cyan)
-                    Slider(value: $notchFreq, in: 50...65, step: 1)
-                        .frame(width: 100)
-                        .tint(.cyan)
+                    Picker("Notch", selection: $notchFreq) {
+                        ForEach([Float(50), 55, 60, 65], id: \.self) { hz in
+                            Text("\(Int(hz)) Hz").tag(hz)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.cyan)
                 } else {
                     Text("Notch filter off")
                         .font(.caption)

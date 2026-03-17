@@ -126,6 +126,12 @@ struct BandPowerView: View {
                     ForEach(Constants.windowSizeOptions, id: \.self) { ws in
                         Text("\(Int(ws))s").tag(ws)
                     }
+                    let halfDur = (edfData.duration / 2).rounded()
+                    let fullDur = edfData.duration.rounded()
+                    if halfDur > Constants.windowSizeOptions.last ?? 0 {
+                        Text("Half").tag(halfDur)
+                    }
+                    Text("All").tag(fullDur)
                 }
                 .pickerStyle(.menu)
                 .tint(.blue)
@@ -152,6 +158,8 @@ struct BandPowerView: View {
         .background(Color(red: 0.06, green: 0.06, blue: 0.10))
     }
 
+    private static let notchOptions: [Float] = [50, 55, 60, 65]
+
     private var notchFilterControls: some View {
         HStack(spacing: 6) {
             Button {
@@ -164,15 +172,16 @@ struct BandPowerView: View {
             }
 
             if notchEnabled {
-                Text("\(Int(notchFreq))Hz")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundColor(.cyan)
-                Slider(value: $notchFreq, in: 50...65, step: 1)
-                    .frame(width: 70)
-                    .tint(.cyan)
-                    .onChange(of: notchFreq) { _ in
-                        Task { await processData() }
+                Picker("Notch", selection: $notchFreq) {
+                    ForEach(Self.notchOptions, id: \.self) { hz in
+                        Text("\(Int(hz)) Hz").tag(hz)
                     }
+                }
+                .pickerStyle(.menu)
+                .tint(.cyan)
+                .onChange(of: notchFreq) { _ in
+                    Task { await processData() }
+                }
             } else {
                 Text("Notch off")
                     .font(.caption2)
