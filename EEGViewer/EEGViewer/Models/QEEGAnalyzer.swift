@@ -136,7 +136,7 @@ class QEEGAnalyzer: ObservableObject {
     @Published var results: QEEGResults?
     @Published var isAnalyzing = false
 
-    func analyze(edfData: EDFData, filename: String = "", exclusions: [(start: Float, end: Float)] = [], badChannelIndices: Set<Int> = []) async {
+    func analyze(edfData: EDFData, filename: String = "", exclusions: [(start: Float, end: Float)] = [], badChannelIndices: Set<Int> = [], notchFrequency: Float? = nil) async {
         isAnalyzing = true
         progress = 0
         statusMessage = "Starting analysis..."
@@ -163,6 +163,14 @@ class QEEGAnalyzer: ObservableObject {
         data = await Task.detached {
             data.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
         }.value
+
+        // Step 1.6: Notch filter to remove power line noise
+        if let notchHz = notchFrequency {
+            await updateProgress(0.045, "Applying \(Int(notchHz)) Hz notch filter...")
+            data = await Task.detached {
+                data.map { SignalProcessor.notchFilter($0, sfreq: sfreq, centerFreq: notchHz) }
+            }.value
+        }
 
         // Step 1.5: Apply manual annotation exclusions
         if !exclusions.isEmpty {

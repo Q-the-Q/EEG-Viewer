@@ -9,6 +9,8 @@ struct HeartDashboard: View {
     let primaryFilename: String
     @ObservedObject var annotationStore: AnnotationStore
     @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     var body: some View {
         Group {
@@ -70,6 +72,29 @@ struct HeartDashboard: View {
                 }
                 .font(.caption)
                 .foregroundColor(applyAnnotations ? .orange : .gray)
+            }
+
+            // Notch filter controls
+            HStack(spacing: 6) {
+                Button {
+                    notchEnabled.toggle()
+                } label: {
+                    Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                        .font(.caption)
+                        .foregroundColor(notchEnabled ? .cyan : .gray)
+                }
+                if notchEnabled {
+                    Text("\(Int(notchFreq))Hz notch")
+                        .font(.caption)
+                        .foregroundColor(.cyan)
+                    Slider(value: $notchFreq, in: 50...65, step: 1)
+                        .frame(width: 100)
+                        .tint(.cyan)
+                } else {
+                    Text("Notch filter off")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
             }
 
             Button {

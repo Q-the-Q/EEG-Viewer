@@ -75,6 +75,39 @@ struct SignalProcessor {
         return result
     }
 
+    /// Apply a zero-phase notch (band-reject) filter to remove power line noise.
+    /// `centerFreq` is the frequency to reject (e.g. 50 or 60 Hz).
+    /// `bandwidth` controls the notch width in Hz (default 2 Hz → ±1 Hz).
+    static func notchFilter(_ signal: [Float], sfreq: Float, centerFreq: Float, bandwidth: Float = 2.0) -> [Float] {
+        let nyquist = sfreq / 2.0
+        guard centerFreq < nyquist else { return signal }  // Can't filter above Nyquist
+
+        let omega = Double.pi * Double(centerFreq / nyquist)
+        let bw = Double.pi * Double(bandwidth / sfreq)  // Normalized bandwidth
+        let r = 1.0 - bw  // Pole radius: closer to 1 = narrower notch
+        let cs = cos(omega)
+
+        // Notch biquad: zeros on unit circle at ±centerFreq, poles just inside
+        let b0 = 1.0
+        let b1 = -2.0 * cs
+        let b2 = 1.0
+        let a0 = 1.0
+        let a1 = -2.0 * r * cs
+        let a2 = r * r
+
+        // Normalize gain to unity at DC
+        let gainDC = (b0 + b1 + b2) / (a0 + a1 + a2)
+        let section = [b0 / (a0 * gainDC), b1 / (a0 * gainDC), b2 / (a0 * gainDC), a1 / a0, a2 / a0]
+
+        // Zero-phase: forward + backward pass
+        var result = applyBiquadCascade(signal, sections: [section])
+        result.reverse()
+        result = applyBiquadCascade(result, sections: [section])
+        result.reverse()
+
+        return result
+    }
+
     // MARK: - Welch PSD
 
     /// Compute Power Spectral Density using Welch's method.

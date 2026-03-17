@@ -22,6 +22,8 @@ struct BandPowerView: View {
     @State private var timer: AnyCancellable?
     @GestureState private var dragStartTime: Float?
     @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     private let spectrogramMaxFreq: Float = 50.0
 
@@ -140,11 +142,43 @@ struct BandPowerView: View {
 
                 // Annotation filter toggle
                 annotationFilterToggle
+
+                // Notch filter controls
+                notchFilterControls
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
         .background(Color(red: 0.06, green: 0.06, blue: 0.10))
+    }
+
+    private var notchFilterControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                notchEnabled.toggle()
+                Task { await processData() }
+            } label: {
+                Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                    .font(.caption)
+                    .foregroundColor(notchEnabled ? .cyan : .gray)
+            }
+
+            if notchEnabled {
+                Text("\(Int(notchFreq))Hz")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.cyan)
+                Slider(value: $notchFreq, in: 50...65, step: 1)
+                    .frame(width: 70)
+                    .tint(.cyan)
+                    .onChange(of: notchFreq) { _ in
+                        Task { await processData() }
+                    }
+            } else {
+                Text("Notch off")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
     }
 
     private var annotationFilterToggle: some View {
@@ -172,13 +206,20 @@ struct BandPowerView: View {
         let sfreq = edfData.sfreq
         let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
         let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
+        let useNotch = notchEnabled
+        let notchHz = notchFreq
         let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (traces, specResult, processedSfreq, specImg) = await Task.detached(priority: .userInitiated) {
             // Interpolate bad channels before average reference to prevent noise spreading
             let interpolated = SignalProcessor.interpolateBadChannels(eegFiltered, channels: channels, badChannelIndices: badChannels)
             let referenced = SignalProcessor.averageReference(interpolated)
-            let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+            var filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+
+            // Apply notch filter to remove power line noise
+            if useNotch {
+                filtered = filtered.map { SignalProcessor.notchFilter($0, sfreq: sfreq, centerFreq: notchHz) }
+            }
 
             // Exclude bad channels from GFP/spectrogram — interpolated data is only
             // useful for clean average reference, not for spectral analysis

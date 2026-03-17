@@ -67,6 +67,8 @@ struct QEEGDashboard: View {
     @State private var isLoadingComparison = false
     @State private var showDiff = false
     @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     /// All available results: primary + comparisons + optional diff.
     /// Each entry includes a stable sessionID (nil for primary/diff) and isDiff flag.
@@ -234,10 +236,34 @@ struct QEEGDashboard: View {
                 .foregroundColor(applyAnnotations ? .orange : .gray)
             }
 
+            // Notch filter controls
+            HStack(spacing: 6) {
+                Button {
+                    notchEnabled.toggle()
+                } label: {
+                    Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                        .font(.caption)
+                        .foregroundColor(notchEnabled ? .cyan : .gray)
+                }
+                if notchEnabled {
+                    Text("\(Int(notchFreq))Hz notch")
+                        .font(.caption)
+                        .foregroundColor(.cyan)
+                    Slider(value: $notchFreq, in: 50...65, step: 1)
+                        .frame(width: 100)
+                        .tint(.cyan)
+                } else {
+                    Text("Notch filter off")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+
             Button {
                 let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
                 let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
-                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions, badChannelIndices: badChannels) }
+                let notchHz: Float? = notchEnabled ? notchFreq : nil
+                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions, badChannelIndices: badChannels, notchFrequency: notchHz) }
             } label: {
                 Label("Run qEEG Analysis", systemImage: "waveform.path.ecg")
                     .font(.title3)
