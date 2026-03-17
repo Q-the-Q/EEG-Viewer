@@ -43,7 +43,7 @@ Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerat
 - **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared asymmetry axis ranges across recordings for consistent visual comparison. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage). Works on iPad and when running the iPad app on Mac.
 - **3D Brain Visualization**: interactive SceneKit brain model with per-vertex electrode color blending (inverse-distance-squared weighting from 3 nearest electrodes), real-time Z-score heatmap updates, mesh decimation (~300k→40k vertices inner, ~150k→12k outer), Fresnel edge-glow shader on translucent outer shell, and async mesh loading for responsive startup
 - **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording
-- **Heart Rate Analysis**: automatic ECG channel detection with HRV analysis dashboard
+- **Heart Rate Analysis**: automatic ECG channel detection with HRV analysis dashboard including multi-band heart-brain coherence (Delta, Theta, Alpha) with EEG artifact rejection and adaptive spectral resolution
 - **Mac Catalyst Support**: runs natively on Apple Silicon Macs via Mac Catalyst (same codebase as iPad)
 
 ---
@@ -295,6 +295,18 @@ For each channel, two peak frequencies are identified:
 - **Alpha Peak**: the frequency with maximum PSD in the alpha band (8-13 Hz). The individual alpha frequency (IAF) is a key marker that correlates with cognitive processing speed and declines with age.
 - **Dominant Frequency**: the frequency with maximum PSD across the entire 1-25 Hz range.
 
+### Heart-Brain Coherence *(iPadOS/Mac)*
+
+Heart-brain coherence measures the synchronization between cardiac rhythm and EEG neural oscillations. The analysis pipeline:
+
+1. **Cardiac signal**: R-R intervals are interpolated to a uniform 4 Hz time series and detrended
+2. **EEG artifact rejection**: Each EEG channel is segmented into 2-second epochs. Epochs with peak-to-peak amplitude exceeding 100 µV are zeroed out (preserving temporal alignment with the cardiac signal) to prevent muscle/movement artifacts from contaminating the coherence estimate
+3. **Multi-band processing**: For each of three EEG bands — Delta (1–4 Hz, autonomic/homeostatic), Theta (4–8 Hz, limbic/emotional), Alpha (8–13 Hz, cortical relaxation) — the artifact-cleaned EEG is bandpass filtered and a windowed RMS envelope is computed at 4 Hz
+4. **Coherence estimation**: Magnitude-squared coherence (Welch's method) between the cardiac signal and each EEG band envelope is computed in the LF band (0.04–0.15 Hz), with adaptive FFT segment length (128–256 samples based on data length) for improved spectral resolution
+5. **Band picker UI**: A segmented control allows switching between Delta/Theta/Alpha coherence views, with a "best band" indicator highlighting which neural frequency band shows the strongest cardiac coupling
+
+Coherence values range from 0 (no coupling) to 1 (perfect coupling). Typical values for resting EEG are 0.02–0.25, with higher values during focused attention, positive emotional states, and effective self-regulation.
+
 ---
 
 ## Project Structure
@@ -346,6 +358,7 @@ EEG Viewer/
                 EDFReader.swift          # Pure-Swift EDF parser (no dependencies)
                 EEGAnnotation.swift      # Annotation data model, labels, and JSON persistence
                 QEEGAnalyzer.swift       # Async analysis pipeline (FFT, PSD, coherence)
+                HRVAnalyzer.swift       # HRV analysis + multi-band heart-brain coherence
                 SignalProcessor.swift    # DSP via Accelerate (Welch PSD, filtering, notch, coherence)
             Views/
                 ContentView.swift        # Tab navigation, file picker, data management
@@ -359,6 +372,8 @@ EEG Viewer/
                 AsymmetryChartView.swift # Hemispheric asymmetry bar chart (Swift Charts)
                 BrainView3D.swift        # 3D brain visualization (SceneKit)
                 HeartDashboard.swift     # ECG/HRV analysis dashboard
+                HRVChartsView.swift     # HRV chart components (Poincaré, PSD, coherence)
+                MetricInfoContent.swift # Info popover content for HRV/coherence metrics
             Utilities/
                 ColorMap.swift           # Clinical-style colormap (blue → white → red)
                 TopoMapRenderer.swift    # CoreGraphics topomap renderer (interpolation + head outline)

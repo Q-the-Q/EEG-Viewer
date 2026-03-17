@@ -31,9 +31,19 @@ struct HRVResults {
     let sd1: Float                 // ms
     let sd2: Float                 // ms
 
-    // Heart-Brain Coherence
-    let heartBrainCoherence: [String: Float]  // channel → LF coherence
-    let coherenceScore: Float                  // overall mean
+    // Heart-Brain Coherence (multi-band)
+    let heartBrainCoherenceByBand: [String: [String: Float]]  // band → (channel → LF coherence)
+    let coherenceScoreByBand: [String: Float]                  // band → mean coherence
+    let coherenceBestBand: String                              // band with highest mean
+
+    /// Backward-compatible accessor: returns alpha-band per-channel coherence.
+    var heartBrainCoherence: [String: Float] {
+        heartBrainCoherenceByBand["Alpha"] ?? [:]
+    }
+    /// Backward-compatible accessor: returns alpha-band overall coherence score.
+    var coherenceScore: Float {
+        coherenceScoreByBand["Alpha"] ?? 0
+    }
 
     // Metadata
     let ecgChannelName: String
@@ -164,8 +174,9 @@ class HRVAnalyzer: ObservableObject {
             rrN1: poincare.rrN1,
             sd1: poincare.sd1,
             sd2: poincare.sd2,
-            heartBrainCoherence: coherenceResult.perChannel,
-            coherenceScore: coherenceResult.overall,
+            heartBrainCoherenceByBand: coherenceResult.perBand,
+            coherenceScoreByBand: coherenceResult.overallByBand,
+            coherenceBestBand: coherenceResult.bestBand,
             ecgChannelName: ecgName,
             sfreq: sfreq,
             sourceFilename: filename,
@@ -545,8 +556,9 @@ class HRVAnalyzer: ObservableObject {
     // MARK: - Heart-Brain Coherence
 
     private struct CoherenceResult {
-        let perChannel: [String: Float]
-        let overall: Float
+        let perBand: [String: [String: Float]]   // band → (channel → coherence)
+        let overallByBand: [String: Float]        // band → mean coherence
+        let bestBand: String                      // band with highest mean
     }
 
     nonisolated private static func computeHeartBrainCoherence(
@@ -554,77 +566,134 @@ class HRVAnalyzer: ObservableObject {
         eegData: [[Float]], eegChannels: [String],
         sfreq: Float
     ) -> CoherenceResult {
-        let empty = CoherenceResult(perChannel: [:], overall: 0)
+        let empty = CoherenceResult(
+            perBand: [:], overallByBand: [:], bestBand: "Alpha"
+        )
         guard rrTimes.count >= 10, !eegData.isEmpty else { return empty }
 
         let interpRate = Constants.hrvInterpolationRate
         let windowSec = Constants.eegEnvelopeWindowSec
         let stepSec = Constants.eegEnvelopeStepSec
 
-        // Cardiac rhythm signal: interpolated RR at 4 Hz
+        // Cardiac rhythm signal: interpolated RR at 4 Hz, detrended
         let cardiacSignal = SignalProcessor.interpolateLinear(
             times: rrTimes, values: rrIntervals, targetSfreq: interpRate
         )
         guard cardiacSignal.count >= 32 else { return empty }
 
-        // Detrend cardiac signal
         var cardiacMean: Float = 0
         vDSP_meanv(cardiacSignal, 1, &cardiacMean, vDSP_Length(cardiacSignal.count))
         let cardiacDetrended = cardiacSignal.map { $0 - cardiacMean }
 
-        // For each EEG channel: compute alpha-band envelope, then coherence with cardiac
-        var perChannel = [String: Float]()
-        var cohSum: Float = 0
-        var cohCount = 0
+        // EEG artifact rejection parameters
+        let epochSamples = Int(2.0 * sfreq)  // 2-second epochs
+        let artifactThreshold = Constants.eegArtifactThresholdUV
 
-        for (chIdx, channel) in eegChannels.enumerated() {
-            guard chIdx < eegData.count else { continue }
+        // Process each EEG band (delta, theta, alpha)
+        var perBand = [String: [String: Float]]()
+        var overallByBand = [String: Float]()
 
-            // Bandpass into alpha (8-13 Hz)
-            let alphaFiltered = SignalProcessor.bandpassFilter(
-                eegData[chIdx], sfreq: sfreq, lowCut: 8.0, highCut: 13.0
-            )
+        for band in Constants.heartBrainCoherenceBands {
+            var perChannel = [String: Float]()
+            var cohSum: Float = 0
+            var cohCount = 0
 
-            // Compute windowed RMS envelope (~4 Hz output)
-            let envelope = SignalProcessor.windowedRMSEnvelope(
-                alphaFiltered, sfreq: sfreq,
-                windowSec: windowSec, stepSec: stepSec
-            )
-            guard envelope.count >= 32 else { continue }
+            for (chIdx, channel) in eegChannels.enumerated() {
+                guard chIdx < eegData.count else { continue }
+                let rawChannel = eegData[chIdx]
 
-            // Match lengths to cardiac signal
-            let minLen = min(cardiacDetrended.count, envelope.count)
-            let cardTrimmed = Array(cardiacDetrended.prefix(minLen))
-            var envTrimmed = Array(envelope.prefix(minLen))
+                // --- Artifact rejection: zero out dirty 2s epochs to preserve temporal alignment ---
+                // We zero rather than remove to keep the EEG timeline aligned with the cardiac signal.
+                var cleanedSignal = rawChannel
+                var cleanEpochCount = 0
+                var epochStart = 0
+                while epochStart + epochSamples <= rawChannel.count {
+                    var epochMin: Float = 0, epochMax: Float = 0
+                    cleanedSignal.withUnsafeBufferPointer { buf in
+                        let ptr = buf.baseAddress! + epochStart
+                        vDSP_minv(ptr, 1, &epochMin, vDSP_Length(epochSamples))
+                        vDSP_maxv(ptr, 1, &epochMax, vDSP_Length(epochSamples))
+                    }
+                    let ptp = epochMax - epochMin
+                    if ptp < artifactThreshold {
+                        cleanEpochCount += 1
+                    } else {
+                        // Zero out the artifact epoch (preserves timeline)
+                        for i in epochStart..<(epochStart + epochSamples) {
+                            cleanedSignal[i] = 0
+                        }
+                    }
+                    epochStart += epochSamples
+                }
+                guard cleanEpochCount >= 1 else { continue }
 
-            // Detrend envelope
-            var envMean: Float = 0
-            vDSP_meanv(envTrimmed, 1, &envMean, vDSP_Length(envTrimmed.count))
-            envTrimmed = envTrimmed.map { $0 - envMean }
+                // --- Bandpass into this EEG band ---
+                let bandFiltered = SignalProcessor.bandpassFilter(
+                    cleanedSignal, sfreq: sfreq,
+                    lowCut: band.low, highCut: band.high
+                )
 
-            // Coherence in LF band (0.04-0.15 Hz)
-            let nperseg = min(64, minLen)
-            let noverlap = nperseg / 2
-            guard nperseg >= 8 else { continue }
+                // --- Compute windowed RMS envelope (~4 Hz output) ---
+                let envelope = SignalProcessor.windowedRMSEnvelope(
+                    bandFiltered, sfreq: sfreq,
+                    windowSec: windowSec, stepSec: stepSec
+                )
+                guard envelope.count >= 32 else { continue }
 
-            let (cohFreqs, coh) = SignalProcessor.coherence(
-                cardTrimmed, envTrimmed, sfreq: interpRate,
-                nperseg: nperseg, noverlap: noverlap
-            )
+                // Match lengths to cardiac signal
+                let minLen = min(cardiacDetrended.count, envelope.count)
+                let cardTrimmed = Array(cardiacDetrended.prefix(minLen))
+                var envTrimmed = Array(envelope.prefix(minLen))
 
-            let bandCoh = SignalProcessor.bandCoherence(
-                coh, freqs: cohFreqs,
-                low: Constants.heartBrainCoherenceBand.low,
-                high: Constants.heartBrainCoherenceBand.high
-            )
+                // Detrend envelope
+                var envMean: Float = 0
+                vDSP_meanv(envTrimmed, 1, &envMean, vDSP_Length(envTrimmed.count))
+                envTrimmed = envTrimmed.map { $0 - envMean }
 
-            perChannel[channel] = bandCoh
-            cohSum += bandCoh
-            cohCount += 1
+                // --- Adaptive nperseg: prefer 128-256, fall back to nearest power-of-two ---
+                // vDSP FFT requires power-of-two segment lengths.
+                let nperseg: Int
+                if minLen >= Constants.heartBrainCoherenceMaxNperseg {
+                    nperseg = Constants.heartBrainCoherenceMaxNperseg
+                } else if minLen >= Constants.heartBrainCoherenceMinNperseg {
+                    nperseg = Constants.heartBrainCoherenceMinNperseg
+                } else {
+                    // Round down to nearest power of two for FFT compatibility
+                    let raw = min(64, minLen)
+                    nperseg = raw >= 8 ? (1 << Int(log2(Float(raw)))) : raw
+                }
+                let noverlap = nperseg / 2
+                guard nperseg >= 8 else { continue }
+
+                let (cohFreqs, coh) = SignalProcessor.coherence(
+                    cardTrimmed, envTrimmed, sfreq: interpRate,
+                    nperseg: nperseg, noverlap: noverlap
+                )
+
+                let bandCoh = SignalProcessor.bandCoherence(
+                    coh, freqs: cohFreqs,
+                    low: Constants.heartBrainCoherenceLFBand.low,
+                    high: Constants.heartBrainCoherenceLFBand.high
+                )
+
+                perChannel[channel] = bandCoh
+                cohSum += bandCoh
+                cohCount += 1
+            }
+
+            perBand[band.name] = perChannel
+            overallByBand[band.name] = cohCount > 0 ? cohSum / Float(cohCount) : 0
         }
 
-        let overall = cohCount > 0 ? cohSum / Float(cohCount) : 0
+        // Find best band (highest overall mean), using band order for deterministic tie-breaking
+        let bestBand = Constants.heartBrainCoherenceBands
+            .max(by: { (overallByBand[$0.name] ?? 0) < (overallByBand[$1.name] ?? 0) })?
+            .name ?? "Alpha"
 
-        return CoherenceResult(perChannel: perChannel, overall: overall)
+        return CoherenceResult(
+            perBand: perBand,
+            overallByBand: overallByBand,
+            bestBand: bestBand
+        )
     }
 }

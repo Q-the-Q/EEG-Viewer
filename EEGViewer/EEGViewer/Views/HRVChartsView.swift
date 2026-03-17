@@ -823,6 +823,7 @@ struct HeartBrainCoherenceChartView: View {
     let results: HRVResults
 
     @State private var sortByValue = false
+    @State private var selectedBand: String = Constants.heartBrainCoherenceBands.last?.name ?? "Alpha"
 
     private struct CohPoint: Identifiable {
         let id = UUID()
@@ -831,8 +832,9 @@ struct HeartBrainCoherenceChartView: View {
     }
 
     private var dataPoints: [CohPoint] {
+        let bandData = results.heartBrainCoherenceByBand[selectedBand] ?? [:]
         let points = Constants.standard1020Channels.compactMap { ch -> CohPoint? in
-            guard let coh = results.heartBrainCoherence[ch] else { return nil }
+            guard let coh = bandData[ch] else { return nil }
             return CohPoint(channel: ch, coherence: coh)
         }
         if sortByValue {
@@ -846,12 +848,37 @@ struct HeartBrainCoherenceChartView: View {
         dataPoints.map(\.channel)
     }
 
+    private var currentOverallScore: Float {
+        results.coherenceScoreByBand[selectedBand] ?? 0
+    }
+
     var body: some View {
         VStack(spacing: 8) {
+            // Band selector (segmented control)
+            Picker("EEG Band", selection: $selectedBand) {
+                ForEach(Constants.heartBrainCoherenceBands, id: \.name) { band in
+                    Text(band.name).tag(band.name)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 4)
+
+            // Best band indicator
+            if results.coherenceBestBand != selectedBand {
+                HStack(spacing: 4) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                        .font(.caption2)
+                    Text("Strongest coupling in \(results.coherenceBestBand) band")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             // Vertical bar chart — channel names on X-axis with high-contrast labels
             Chart {
                 // Mean coherence threshold line
-                RuleMark(y: .value("Mean", results.coherenceScore))
+                RuleMark(y: .value("Mean", currentOverallScore))
                     .foregroundStyle(Color.orange.opacity(0.7))
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
                     .annotation(position: .trailing, alignment: .leading) {
@@ -885,7 +912,7 @@ struct HeartBrainCoherenceChartView: View {
                 }
             }
             .chartYAxisLabel {
-                Text("Coherence (LF band)")
+                Text("Coherence (\(selectedBand) → LF)")
                     .font(.system(size: 13, weight: .medium))
             }
             .frame(height: 260)
@@ -909,7 +936,7 @@ struct HeartBrainCoherenceChartView: View {
                         .font(.subheadline)
                     Text("Overall:")
                         .font(.subheadline)
-                    Text(String(format: "%.3f", results.coherenceScore))
+                    Text(String(format: "%.3f", currentOverallScore))
                         .font(.subheadline.monospacedDigit().bold())
                     Text(coherenceInterpretation)
                         .font(.caption.weight(.medium))
@@ -930,7 +957,7 @@ struct HeartBrainCoherenceChartView: View {
     }
 
     private var coherenceInterpretation: String {
-        let score = results.coherenceScore
+        let score = currentOverallScore
         if score >= 0.5 { return "High" }
         if score >= 0.3 { return "Moderate" }
         if score >= 0.1 { return "Low" }
@@ -938,7 +965,7 @@ struct HeartBrainCoherenceChartView: View {
     }
 
     private var coherenceInterpretationColor: Color {
-        let score = results.coherenceScore
+        let score = currentOverallScore
         if score >= 0.5 { return .green }
         if score >= 0.3 { return .blue }
         if score >= 0.1 { return .orange }

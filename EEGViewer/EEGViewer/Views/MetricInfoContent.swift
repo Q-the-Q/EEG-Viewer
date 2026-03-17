@@ -43,7 +43,7 @@ enum MetricInfoContent {
 
     static let heartBrainCoherence = InfoItem(
         title: "Heart-Brain Coherence",
-        description: "Measures the synchronization between cardiac rhythm (R-R interval variations) and EEG alpha-band power envelopes in the low-frequency band (0.04\u{2013}0.15 Hz). Higher coherence values indicate stronger coupling between cardiac and neural oscillations, which has been associated with focused attention, positive emotional states, and effective self-regulation."
+        description: "Measures the synchronization between cardiac rhythm (R-R interval variations) and EEG band power envelopes in the low-frequency band (0.04\u{2013}0.15 Hz). Three EEG bands are analyzed: Delta (1\u{2013}4 Hz, autonomic/homeostatic), Theta (4\u{2013}8 Hz, limbic/emotional), and Alpha (8\u{2013}13 Hz, cortical relaxation). EEG epochs with artifacts (>100 \u{00b5}V peak-to-peak) are automatically rejected before analysis. Higher coherence values indicate stronger coupling between cardiac and neural oscillations, associated with focused attention, positive emotional states, and effective self-regulation."
     )
 
     // MARK: Individual Metrics
