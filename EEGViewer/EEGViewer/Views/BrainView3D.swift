@@ -38,9 +38,13 @@ struct BrainView3D: View {
     @ObservedObject var annotationStore: AnnotationStore
 
     // Static geometry caches — written once (first tab visit), then read-only.
-    // nonisolated(unsafe): safe because writes happen in a single Task.detached, never concurrently.
+    // Protected by cacheQueue to prevent concurrent write races from overlapping processAndBuild tasks.
+    private static let cacheQueue = DispatchQueue(label: "BrainView3D.cache")
     nonisolated(unsafe) private static var geometryCache: BrainGeometryCache?
     nonisolated(unsafe) private static var blendCache:    BrainBlendCache?
+
+    // Task handle for cancellation when user re-triggers processing
+    @State private var processingTask: Task<Void, Never>?
 
     // Scene state
     @State private var scene = SCNScene()
@@ -223,7 +227,8 @@ struct BrainView3D: View {
                 // Annotation filter toggle
                 Button {
                     applyAnnotations.toggle()
-                    Task { await processAndBuild() }
+                    processingTask?.cancel()
+                    processingTask = Task { await processAndBuild() }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
@@ -238,7 +243,8 @@ struct BrainView3D: View {
                 HStack(spacing: 6) {
                     Button {
                         notchEnabled.toggle()
-                        Task { await processAndBuild() }
+                        processingTask?.cancel()
+                    processingTask = Task { await processAndBuild() }
                     } label: {
                         Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
                             .font(.caption)
@@ -253,7 +259,8 @@ struct BrainView3D: View {
                         .pickerStyle(.menu)
                         .tint(.cyan)
                         .onChange(of: notchFreq) { _ in
-                            Task { await processAndBuild() }
+                            processingTask?.cancel()
+                    processingTask = Task { await processAndBuild() }
                         }
                     } else {
                         Text("Notch off")
@@ -306,6 +313,9 @@ struct BrainView3D: View {
             let nSamples  = decimated[0].count
             let epochLen  = Int(2.0 * decimSfreq)
             let epochStep = Int(0.5 * decimSfreq)
+            guard epochLen > 0, epochStep > 0, nSamples >= epochLen else {
+                return ([String: [[Float]]](), [Float](), BrainGeometryCache?.none, BrainBlendCache?.none)
+            }
             let nEpochs   = max(1, (nSamples - epochLen) / epochStep + 1)
 
             var times = [Float]()
@@ -352,7 +362,7 @@ struct BrainView3D: View {
 
             // --- Geometry cache: OBJ parse + decimation (runs once, ~1–2 s on first load) ---
             let geoCache: BrainGeometryCache?
-            if let cached = BrainView3D.geometryCache {
+            if let cached = BrainView3D.cacheQueue.sync(execute: { BrainView3D.geometryCache }) {
                 geoCache = cached                                          // ~instant on revisit
             } else {
                 guard let lhURL = Bundle.main.url(forResource: "lh.pial", withExtension: "obj"),
@@ -411,13 +421,13 @@ struct BrainView3D: View {
                     outerRHVerts: orhV, outerRHFaces: orhF,
                     innerVerts: innerV, innerFaces: innerF
                 )
-                BrainView3D.geometryCache = newCache
+                BrainView3D.cacheQueue.sync { BrainView3D.geometryCache = newCache }
                 geoCache = newCache
             }
 
             // --- Blend weight cache: keyed on channel list (fast if same channels) ---
             let blendResult: BrainBlendCache?
-            if let cached = BrainView3D.blendCache, cached.channelKey == channels {
+            if let cached = BrainView3D.cacheQueue.sync(execute: { BrainView3D.blendCache }), cached.channelKey == channels {
                 blendResult = cached
             } else if let gc = geoCache {
                 var electrodeInfo: [(name: String, pos: SCNVector3)] = []
@@ -471,7 +481,7 @@ struct BrainView3D: View {
                     blendWeights: blendWeights,
                     electrodeNames: electrodeInfo.map { $0.name }
                 )
-                BrainView3D.blendCache = newBlend
+                BrainView3D.cacheQueue.sync { BrainView3D.blendCache = newBlend }
                 blendResult = newBlend
             } else {
                 blendResult = nil

@@ -238,18 +238,22 @@ class QEEGAnalyzer: ObservableObject {
                 for j in (i + 1)..<nChannels { pairs.append((i, j)) }
             }
 
-            // Each element stores band-coherence values for one pair
+            // Each element stores band-coherence values for one pair.
+            // Use UnsafeMutableBufferPointer for thread-safe concurrent element writes
+            // (Swift Array element writes from multiple threads are not guaranteed safe).
             var pairResults = [[(String, Float)]](repeating: [], count: pairs.count)
 
             // concurrentPerform spreads work across all performance cores (synchronous barrier)
-            DispatchQueue.concurrentPerform(iterations: pairs.count) { idx in
-                let (i, j) = pairs[idx]
-                let (cohFreqs, coh) = SignalProcessor.coherence(
-                    cleanData[i], cleanData[j], sfreq: sfreq,
-                    nperseg: cohNperseg, noverlap: cohNoverlap
-                )
-                pairResults[idx] = bandDefs.map { band in
-                    (band.name, SignalProcessor.bandCoherence(coh, freqs: cohFreqs, low: band.low, high: band.high))
+            pairResults.withUnsafeMutableBufferPointer { buf in
+                DispatchQueue.concurrentPerform(iterations: pairs.count) { idx in
+                    let (i, j) = pairs[idx]
+                    let (cohFreqs, coh) = SignalProcessor.coherence(
+                        cleanData[i], cleanData[j], sfreq: sfreq,
+                        nperseg: cohNperseg, noverlap: cohNoverlap
+                    )
+                    buf[idx] = bandDefs.map { band in
+                        (band.name, SignalProcessor.bandCoherence(coh, freqs: cohFreqs, low: band.low, high: band.high))
+                    }
                 }
             }
 

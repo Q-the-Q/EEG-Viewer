@@ -161,6 +161,14 @@ struct DocumentPicker: UIViewControllerRepresentable {
             try? FileManager.default.removeItem(at: tempURL)
             try? FileManager.default.copyItem(at: url, to: tempURL)
 
+            // Also copy annotation sidecar if it exists (while we still have security scope)
+            let sidecarURL = AnnotationStore.annotationURL(for: url)
+            if FileManager.default.fileExists(atPath: sidecarURL.path) {
+                let tempSidecar = AnnotationStore.annotationURL(for: tempURL)
+                try? FileManager.default.removeItem(at: tempSidecar)
+                try? FileManager.default.copyItem(at: sidecarURL, to: tempSidecar)
+            }
+
             onPick(tempURL, url)
         }
     }
