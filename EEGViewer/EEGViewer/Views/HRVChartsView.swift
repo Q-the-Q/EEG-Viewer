@@ -823,7 +823,7 @@ struct HeartBrainCoherenceChartView: View {
     let results: HRVResults
 
     @State private var sortByValue = false
-    @State private var selectedBand: String = "Alpha"
+    @State private var selectedBand: String = Constants.heartBrainCoherenceBands.last?.name ?? "Alpha"
 
     private struct CohPoint: Identifiable {
         let id = UUID()

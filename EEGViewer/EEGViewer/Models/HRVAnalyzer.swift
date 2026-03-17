@@ -602,25 +602,34 @@ class HRVAnalyzer: ObservableObject {
                 guard chIdx < eegData.count else { continue }
                 let rawChannel = eegData[chIdx]
 
-                // --- Artifact rejection: reject 2s epochs with >100 µV peak-to-peak ---
-                var cleanSegments = [Float]()
+                // --- Artifact rejection: zero out dirty 2s epochs to preserve temporal alignment ---
+                // We zero rather than remove to keep the EEG timeline aligned with the cardiac signal.
+                var cleanedSignal = rawChannel
+                var cleanEpochCount = 0
                 var epochStart = 0
                 while epochStart + epochSamples <= rawChannel.count {
-                    let epoch = Array(rawChannel[epochStart..<epochStart + epochSamples])
                     var epochMin: Float = 0, epochMax: Float = 0
-                    vDSP_minv(epoch, 1, &epochMin, vDSP_Length(epoch.count))
-                    vDSP_maxv(epoch, 1, &epochMax, vDSP_Length(epoch.count))
+                    cleanedSignal.withUnsafeBufferPointer { buf in
+                        let ptr = buf.baseAddress! + epochStart
+                        vDSP_minv(ptr, 1, &epochMin, vDSP_Length(epochSamples))
+                        vDSP_maxv(ptr, 1, &epochMax, vDSP_Length(epochSamples))
+                    }
                     let ptp = epochMax - epochMin
                     if ptp < artifactThreshold {
-                        cleanSegments.append(contentsOf: epoch)
+                        cleanEpochCount += 1
+                    } else {
+                        // Zero out the artifact epoch (preserves timeline)
+                        for i in epochStart..<(epochStart + epochSamples) {
+                            cleanedSignal[i] = 0
+                        }
                     }
                     epochStart += epochSamples
                 }
-                guard cleanSegments.count >= epochSamples else { continue }
+                guard cleanEpochCount >= 1 else { continue }
 
                 // --- Bandpass into this EEG band ---
                 let bandFiltered = SignalProcessor.bandpassFilter(
-                    cleanSegments, sfreq: sfreq,
+                    cleanedSignal, sfreq: sfreq,
                     lowCut: band.low, highCut: band.high
                 )
 
@@ -641,14 +650,17 @@ class HRVAnalyzer: ObservableObject {
                 vDSP_meanv(envTrimmed, 1, &envMean, vDSP_Length(envTrimmed.count))
                 envTrimmed = envTrimmed.map { $0 - envMean }
 
-                // --- Adaptive nperseg: prefer 128-256, fall back to 64 ---
+                // --- Adaptive nperseg: prefer 128-256, fall back to nearest power-of-two ---
+                // vDSP FFT requires power-of-two segment lengths.
                 let nperseg: Int
                 if minLen >= Constants.heartBrainCoherenceMaxNperseg {
                     nperseg = Constants.heartBrainCoherenceMaxNperseg
                 } else if minLen >= Constants.heartBrainCoherenceMinNperseg {
                     nperseg = Constants.heartBrainCoherenceMinNperseg
                 } else {
-                    nperseg = min(64, minLen)  // fallback for very short recordings
+                    // Round down to nearest power of two for FFT compatibility
+                    let raw = min(64, minLen)
+                    nperseg = raw >= 8 ? (1 << Int(log2(Float(raw)))) : raw
                 }
                 let noverlap = nperseg / 2
                 guard nperseg >= 8 else { continue }
@@ -673,8 +685,10 @@ class HRVAnalyzer: ObservableObject {
             overallByBand[band.name] = cohCount > 0 ? cohSum / Float(cohCount) : 0
         }
 
-        // Find best band (highest overall mean)
-        let bestBand = overallByBand.max(by: { $0.value < $1.value })?.key ?? "Alpha"
+        // Find best band (highest overall mean), using band order for deterministic tie-breaking
+        let bestBand = Constants.heartBrainCoherenceBands
+            .max(by: { (overallByBand[$0.name] ?? 0) < (overallByBand[$1.name] ?? 0) })?
+            .name ?? "Alpha"
 
         return CoherenceResult(
             perBand: perBand,
