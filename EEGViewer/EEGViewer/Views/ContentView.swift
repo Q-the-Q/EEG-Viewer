@@ -13,29 +13,31 @@ struct ContentView: View {
     @State private var fileLoadID = UUID()
     @StateObject private var analyzer = QEEGAnalyzer()
     @StateObject private var hrvAnalyzer = HRVAnalyzer()
+    @StateObject private var annotationStore = AnnotationStore()
+    @State private var loadedFileURL: URL?
 
     var body: some View {
         NavigationStack {
             Group {
                 if let data = edfData {
                     TabView(selection: $selectedTab) {
-                        WaveformView(edfData: data)
+                        WaveformView(edfData: data, annotationStore: annotationStore)
                             .tabItem { Label("Waveforms", systemImage: "waveform.path") }
                             .tag(0)
 
-                        BandPowerView(edfData: data)
+                        BandPowerView(edfData: data, annotationStore: annotationStore)
                             .tabItem { Label("Bands", systemImage: "chart.line.uptrend.xyaxis") }
                             .tag(1)
 
-                        QEEGDashboard(edfData: data, analyzer: analyzer, primaryFilename: loadedFilename)
+                        QEEGDashboard(edfData: data, analyzer: analyzer, primaryFilename: loadedFilename, annotationStore: annotationStore)
                             .tabItem { Label("qEEG", systemImage: "brain.head.profile") }
                             .tag(2)
 
-                        BrainView3D(edfData: data)
+                        BrainView3D(edfData: data, annotationStore: annotationStore)
                             .tabItem { Label("3D Brain", systemImage: "brain") }
                             .tag(3)
 
-                        HeartDashboard(edfData: data, analyzer: hrvAnalyzer, primaryFilename: loadedFilename)
+                        HeartDashboard(edfData: data, analyzer: hrvAnalyzer, primaryFilename: loadedFilename, annotationStore: annotationStore)
                             .tabItem { Label("\u{2764}\u{FE0F}", systemImage: "heart.fill") }
                             .tag(4)
                     }
@@ -54,8 +56,8 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showFilePicker) {
-                DocumentPicker { url in
-                    loadFile(url: url)
+                DocumentPicker { tempURL, originalURL in
+                    loadFile(tempURL: tempURL, originalURL: originalURL)
                 }
             }
             .alert("Error", isPresented: .init(
@@ -94,11 +96,13 @@ struct ContentView: View {
         }
     }
 
-    private func loadFile(url: URL) {
+    private func loadFile(tempURL: URL, originalURL: URL) {
         do {
-            let data = try EDFReader.read(url: url)
+            let data = try EDFReader.read(url: tempURL)
             self.edfData = data
-            self.loadedFilename = url.lastPathComponent
+            self.loadedFileURL = originalURL
+            self.annotationStore.load(for: originalURL)
+            self.loadedFilename = originalURL.lastPathComponent
             self.errorMessage = nil
             // Reset analyzers so stale results from previous file are cleared
             self.analyzer.results = nil
@@ -115,8 +119,10 @@ struct ContentView: View {
 
 // MARK: - Document Picker
 
+/// Document picker that returns both a temp copy (for reading) and the original URL (for sidecar persistence).
 struct DocumentPicker: UIViewControllerRepresentable {
-    let onPick: (URL) -> Void
+    /// Callback: (tempURL for reading, originalURL for annotation sidecar)
+    let onPick: (URL, URL) -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.data])
@@ -132,9 +138,9 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
+        let onPick: (URL, URL) -> Void
 
-        init(onPick: @escaping (URL) -> Void) {
+        init(onPick: @escaping (URL, URL) -> Void) {
             self.onPick = onPick
         }
 
@@ -144,12 +150,12 @@ struct DocumentPicker: UIViewControllerRepresentable {
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-            // Copy to temp location for reliable access
+            // Copy to temp location for reliable EDF reading
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
             try? FileManager.default.removeItem(at: tempURL)
             try? FileManager.default.copyItem(at: url, to: tempURL)
 
-            onPick(tempURL)
+            onPick(tempURL, url)
         }
     }
 }

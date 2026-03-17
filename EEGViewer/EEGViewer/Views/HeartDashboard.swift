@@ -7,6 +7,10 @@ struct HeartDashboard: View {
     let edfData: EDFData
     @ObservedObject var analyzer: HRVAnalyzer
     let primaryFilename: String
+    @ObservedObject var annotationStore: AnnotationStore
+    @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     var body: some View {
         Group {
@@ -57,9 +61,47 @@ struct HeartDashboard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
+            // Annotation filter toggle
+            Button {
+                applyAnnotations.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    let count = annotationStore.excludedTimeRanges().count
+                    Text(applyAnnotations && count > 0 ? "\(count) annotations excluded" : "No annotation filter")
+                }
+                .font(.caption)
+                .foregroundColor(applyAnnotations ? .orange : .gray)
+            }
+
+            // Notch filter controls
+            HStack(spacing: 6) {
+                Button {
+                    notchEnabled.toggle()
+                } label: {
+                    Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                        .font(.caption)
+                        .foregroundColor(notchEnabled ? .cyan : .gray)
+                }
+                if notchEnabled {
+                    Picker("Notch", selection: $notchFreq) {
+                        ForEach([Float(50), 55, 60, 65], id: \.self) { hz in
+                            Text("\(Int(hz)) Hz").tag(hz)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.cyan)
+                } else {
+                    Text("Notch filter off")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+
             Button {
                 Task {
-                    await analyzer.analyze(edfData: edfData, filename: primaryFilename)
+                    let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+                    await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions)
                 }
             } label: {
                 Label("Run Heart Analysis", systemImage: "heart.fill")

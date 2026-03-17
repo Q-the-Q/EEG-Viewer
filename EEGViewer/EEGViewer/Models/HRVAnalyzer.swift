@@ -50,7 +50,7 @@ class HRVAnalyzer: ObservableObject {
     @Published var isAnalyzing = false
     @Published var errorMessage: String?
 
-    func analyze(edfData: EDFData, filename: String = "") async {
+    func analyze(edfData: EDFData, filename: String = "", exclusions: [(start: Float, end: Float)] = []) async {
         isAnalyzing = true
         errorMessage = nil
         progress = 0
@@ -65,10 +65,19 @@ class HRVAnalyzer: ObservableObject {
 
         let sfreq = edfData.sfreq
 
+        // Step 0.5: Apply annotation exclusions to ECG signal
+        let ecgForAnalysis: [Float]
+        if !exclusions.isEmpty {
+            let excluded = SignalProcessor.applyExclusions([ecgSignal], sfreq: sfreq, exclusions: exclusions)
+            ecgForAnalysis = excluded.first ?? ecgSignal
+        } else {
+            ecgForAnalysis = ecgSignal
+        }
+
         // Step 1: Preprocess ECG for R-peak detection
         await updateProgress(0.05, "Preprocessing ECG...")
         let filteredECG = await Task.detached {
-            SignalProcessor.bandpassFilter(ecgSignal, sfreq: sfreq,
+            SignalProcessor.bandpassFilter(ecgForAnalysis, sfreq: sfreq,
                                            lowCut: Constants.ecgBandpassLow,
                                            highCut: Constants.ecgBandpassHigh)
         }.value
@@ -76,7 +85,7 @@ class HRVAnalyzer: ObservableObject {
         // Step 2: Pan-Tompkins R-peak detection
         await updateProgress(0.15, "Detecting R-peaks...")
         let detection = await Task.detached {
-            HRVAnalyzer.detectRPeaks(filteredECG: filteredECG, rawECG: ecgSignal, sfreq: sfreq)
+            HRVAnalyzer.detectRPeaks(filteredECG: filteredECG, rawECG: ecgForAnalysis, sfreq: sfreq)
         }.value
         let rPeakIndices = detection.peaks
         let ecgIsInverted = detection.isInverted

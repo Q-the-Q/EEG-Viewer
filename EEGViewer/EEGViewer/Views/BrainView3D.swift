@@ -18,6 +18,7 @@ private struct GridCell: Hashable {
 
 struct BrainView3D: View {
     let edfData: EDFData
+    @ObservedObject var annotationStore: AnnotationStore
 
     // Scene state
     @State private var scene = SCNScene()
@@ -46,6 +47,9 @@ struct BrainView3D: View {
     @State private var isPlaying = false
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
+    @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     // Fixed region appearance
     private let regionBrightness: Float = 0.2
@@ -193,6 +197,48 @@ struct BrainView3D: View {
                     Text("+3").font(.caption2).foregroundColor(.gray)
                     Text("Z-score").font(.caption2).foregroundColor(.gray.opacity(0.6))
                 }
+
+                // Annotation filter toggle
+                Button {
+                    applyAnnotations.toggle()
+                    Task { await processAndBuild() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        let count = annotationStore.excludedTimeRanges().count
+                        Text(applyAnnotations && count > 0 ? "\(count) excluded" : "No filter")
+                    }
+                    .font(.caption)
+                    .foregroundColor(applyAnnotations ? .orange : .gray)
+                }
+
+                // Notch filter
+                HStack(spacing: 6) {
+                    Button {
+                        notchEnabled.toggle()
+                        Task { await processAndBuild() }
+                    } label: {
+                        Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                            .font(.caption)
+                            .foregroundColor(notchEnabled ? .cyan : .gray)
+                    }
+                    if notchEnabled {
+                        Picker("Notch", selection: $notchFreq) {
+                            ForEach([Float(50), 55, 60, 65], id: \.self) { hz in
+                                Text("\(Int(hz)) Hz").tag(hz)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.cyan)
+                        .onChange(of: notchFreq) { _ in
+                            Task { await processAndBuild() }
+                        }
+                    } else {
+                        Text("Notch off")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -206,11 +252,24 @@ struct BrainView3D: View {
         isProcessing = true
 
         let eegData = edfData.eegData
+        let channels = edfData.eegChannelNames  // Must match eegData indices, not all channels
         let sfreq = edfData.sfreq
+        let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+        let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
+        let useNotch = notchEnabled
+        let notchHz = notchFreq
+        let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (powerData, times) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegData)
-            let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+            // Interpolate bad channels before average reference to prevent noise spreading
+            let interpolated = SignalProcessor.interpolateBadChannels(eegFiltered, channels: channels, badChannelIndices: badChannels)
+            let referenced = SignalProcessor.averageReference(interpolated)
+            var filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+
+            // Apply notch filter to remove power line noise
+            if useNotch {
+                filtered = filtered.map { SignalProcessor.notchFilter($0, sfreq: sfreq, centerFreq: notchHz) }
+            }
 
             let decimFactor = max(1, Int(sfreq / 50.0))
             let decimSfreq = sfreq / Float(decimFactor)

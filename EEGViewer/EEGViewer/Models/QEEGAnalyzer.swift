@@ -136,7 +136,7 @@ class QEEGAnalyzer: ObservableObject {
     @Published var results: QEEGResults?
     @Published var isAnalyzing = false
 
-    func analyze(edfData: EDFData, filename: String = "") async {
+    func analyze(edfData: EDFData, filename: String = "", exclusions: [(start: Float, end: Float)] = [], badChannelIndices: Set<Int> = [], notchFrequency: Float? = nil) async {
         isAnalyzing = true
         progress = 0
         statusMessage = "Starting analysis..."
@@ -144,6 +144,14 @@ class QEEGAnalyzer: ObservableObject {
         let channels = edfData.eegChannelNames
         var data = edfData.eegData
         let sfreq = edfData.sfreq
+
+        // Step 0.5: Interpolate bad channels before average referencing
+        if !badChannelIndices.isEmpty {
+            await updateProgress(0.01, "Interpolating bad channels...")
+            data = await Task.detached {
+                SignalProcessor.interpolateBadChannels(data, channels: channels, badChannelIndices: badChannelIndices)
+            }.value
+        }
 
         // Step 1: Preprocess — average reference + high-pass filter
         await updateProgress(0.02, "Average referencing...")
@@ -155,6 +163,22 @@ class QEEGAnalyzer: ObservableObject {
         data = await Task.detached {
             data.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
         }.value
+
+        // Step 1.6: Notch filter to remove power line noise
+        if let notchHz = notchFrequency {
+            await updateProgress(0.045, "Applying \(Int(notchHz)) Hz notch filter...")
+            data = await Task.detached {
+                data.map { SignalProcessor.notchFilter($0, sfreq: sfreq, centerFreq: notchHz) }
+            }.value
+        }
+
+        // Step 1.5: Apply manual annotation exclusions
+        if !exclusions.isEmpty {
+            await updateProgress(0.05, "Applying annotation exclusions...")
+            data = await Task.detached {
+                SignalProcessor.applyExclusions(data, sfreq: sfreq, exclusions: exclusions)
+            }.value
+        }
 
         // Step 2: Artifact rejection
         await updateProgress(0.06, "Rejecting artifacts...")

@@ -57,6 +57,7 @@ struct QEEGDashboard: View {
     let edfData: EDFData
     @ObservedObject var analyzer: QEEGAnalyzer
     let primaryFilename: String
+    @ObservedObject var annotationStore: AnnotationStore
     @StateObject private var comparisonManager = ComparisonManager()
     @State private var showComparisonPicker = false
     @State private var comparisonError: String?
@@ -65,6 +66,9 @@ struct QEEGDashboard: View {
     @State private var selectedCoherenceBand: String = "Alpha"
     @State private var isLoadingComparison = false
     @State private var showDiff = false
+    @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     /// All available results: primary + comparisons + optional diff.
     /// Each entry includes a stable sessionID (nil for primary/diff) and isDiff flag.
@@ -102,8 +106,8 @@ struct QEEGDashboard: View {
             }
         }
         .sheet(isPresented: $showComparisonPicker) {
-            DocumentPicker { url in
-                loadComparisonFile(url: url)
+            DocumentPicker { tempURL, _ in
+                loadComparisonFile(url: tempURL)
             }
         }
         .alert("Comparison Error", isPresented: .init(
@@ -219,8 +223,48 @@ struct QEEGDashboard: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
 
+            // Annotation filter toggle
             Button {
-                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename) }
+                applyAnnotations.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    let count = annotationStore.excludedTimeRanges().count
+                    Text(applyAnnotations && count > 0 ? "\(count) annotations excluded" : "No annotation filter")
+                }
+                .font(.caption)
+                .foregroundColor(applyAnnotations ? .orange : .gray)
+            }
+
+            // Notch filter controls
+            HStack(spacing: 6) {
+                Button {
+                    notchEnabled.toggle()
+                } label: {
+                    Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                        .font(.caption)
+                        .foregroundColor(notchEnabled ? .cyan : .gray)
+                }
+                if notchEnabled {
+                    Picker("Notch", selection: $notchFreq) {
+                        ForEach([Float(50), 55, 60, 65], id: \.self) { hz in
+                            Text("\(Int(hz)) Hz").tag(hz)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.cyan)
+                } else {
+                    Text("Notch filter off")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+
+            Button {
+                let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+                let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
+                let notchHz: Float? = notchEnabled ? notchFreq : nil
+                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions, badChannelIndices: badChannels, notchFrequency: notchHz) }
             } label: {
                 Label("Run qEEG Analysis", systemImage: "waveform.path.ecg")
                     .font(.title3)

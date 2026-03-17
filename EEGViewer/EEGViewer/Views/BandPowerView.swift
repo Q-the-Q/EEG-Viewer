@@ -7,6 +7,7 @@ import Combine
 
 struct BandPowerView: View {
     let edfData: EDFData
+    @ObservedObject var annotationStore: AnnotationStore
 
     @State private var bandTraces: [(name: String, color: Color, data: [Float])] = []
     @State private var spectrogramData: SignalProcessor.SpectrogramResult?
@@ -20,6 +21,9 @@ struct BandPowerView: View {
     @State private var speed: Float = 1.0
     @State private var timer: AnyCancellable?
     @GestureState private var dragStartTime: Float?
+    @State private var applyAnnotations = true
+    @State private var notchEnabled = true
+    @State private var notchFreq: Float = 60.0
 
     private let spectrogramMaxFreq: Float = 50.0
 
@@ -122,6 +126,12 @@ struct BandPowerView: View {
                     ForEach(Constants.windowSizeOptions, id: \.self) { ws in
                         Text("\(Int(ws))s").tag(ws)
                     }
+                    let halfDur = (edfData.duration / 2).rounded()
+                    let fullDur = edfData.duration.rounded()
+                    if halfDur > Constants.windowSizeOptions.last ?? 0 {
+                        Text("Half").tag(halfDur)
+                    }
+                    Text("All").tag(fullDur)
                 }
                 .pickerStyle(.menu)
                 .tint(.blue)
@@ -135,11 +145,64 @@ struct BandPowerView: View {
                         }
                     }
                 }
+
+                // Annotation filter toggle
+                annotationFilterToggle
+
+                // Notch filter controls
+                notchFilterControls
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
         .background(Color(red: 0.06, green: 0.06, blue: 0.10))
+    }
+
+    private static let notchOptions: [Float] = [50, 55, 60, 65]
+
+    private var notchFilterControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                notchEnabled.toggle()
+                Task { await processData() }
+            } label: {
+                Image(systemName: notchEnabled ? "waveform.slash" : "waveform")
+                    .font(.caption)
+                    .foregroundColor(notchEnabled ? .cyan : .gray)
+            }
+
+            if notchEnabled {
+                Picker("Notch", selection: $notchFreq) {
+                    ForEach(Self.notchOptions, id: \.self) { hz in
+                        Text("\(Int(hz)) Hz").tag(hz)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.cyan)
+                .onChange(of: notchFreq) { _ in
+                    Task { await processData() }
+                }
+            } else {
+                Text("Notch off")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
+    }
+
+    private var annotationFilterToggle: some View {
+        Button {
+            applyAnnotations.toggle()
+            Task { await processData() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: applyAnnotations ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                let count = annotationStore.excludedTimeRanges().count
+                Text(applyAnnotations && count > 0 ? "\(count) excluded" : "No filter")
+            }
+            .font(.caption)
+            .foregroundColor(applyAnnotations ? .orange : .gray)
+        }
     }
 
     // MARK: - Data Processing
@@ -148,16 +211,38 @@ struct BandPowerView: View {
         isProcessing = true
 
         let eegData = edfData.eegData
+        let channels = edfData.eegChannelNames  // Must match eegData indices, not all channels
         let sfreq = edfData.sfreq
+        let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+        let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
+        let useNotch = notchEnabled
+        let notchHz = notchFreq
+        let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (traces, specResult, processedSfreq, specImg) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegData)
-            let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+            // Interpolate bad channels before average reference to prevent noise spreading
+            let interpolated = SignalProcessor.interpolateBadChannels(eegFiltered, channels: channels, badChannelIndices: badChannels)
+            let referenced = SignalProcessor.averageReference(interpolated)
+            var filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+
+            // Apply notch filter to remove power line noise
+            if useNotch {
+                filtered = filtered.map { SignalProcessor.notchFilter($0, sfreq: sfreq, centerFreq: notchHz) }
+            }
+
+            // Exclude bad channels from GFP/spectrogram — interpolated data is only
+            // useful for clean average reference, not for spectral analysis
+            let goodFiltered: [[Float]]
+            if badChannels.isEmpty {
+                goodFiltered = filtered
+            } else {
+                goodFiltered = filtered.enumerated().compactMap { badChannels.contains($0.offset) ? nil : $0.element }
+            }
 
             // Decimate to 50 Hz for band analysis (1-25 Hz range)
             let decimFactor = max(1, Int(sfreq / 50.0))
             let decimSfreq = sfreq / Float(decimFactor)
-            let decimated = filtered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
+            let decimated = goodFiltered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
 
             // Compute band GFP traces on decimated data
             var bandNames = [String]()
@@ -177,7 +262,7 @@ struct BandPowerView: View {
             // Decimate to ~128 Hz (Nyquist = 64 Hz, supports 50 Hz display)
             let specDecimFactor = max(1, Int(sfreq / 128.0))
             let specDecimSfreq = sfreq / Float(specDecimFactor)
-            let specDecimated = filtered.map { SignalProcessor.decimate($0, factor: specDecimFactor, sfreq: sfreq) }
+            let specDecimated = goodFiltered.map { SignalProcessor.decimate($0, factor: specDecimFactor, sfreq: sfreq) }
 
             let specGfp = SignalProcessor.globalFieldPower(specDecimated)
 

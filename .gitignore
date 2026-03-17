@@ -26,6 +26,7 @@ xcuserdata/
 
 # Claude Code
 .claude/
+.worktrees/
 
 # RTF planning docs
 *.rtf

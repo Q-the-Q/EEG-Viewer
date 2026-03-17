@@ -75,6 +75,39 @@ struct SignalProcessor {
         return result
     }
 
+    /// Apply a zero-phase notch (band-reject) filter to remove power line noise.
+    /// `centerFreq` is the frequency to reject (e.g. 50 or 60 Hz).
+    /// `bandwidth` controls the notch width in Hz (default 2 Hz → ±1 Hz).
+    static func notchFilter(_ signal: [Float], sfreq: Float, centerFreq: Float, bandwidth: Float = 2.0) -> [Float] {
+        let nyquist = sfreq / 2.0
+        guard centerFreq < nyquist else { return signal }  // Can't filter above Nyquist
+
+        let omega = Double.pi * Double(centerFreq / nyquist)
+        let bw = Double.pi * Double(bandwidth / nyquist)  // Normalized bandwidth (relative to Nyquist)
+        let r = 1.0 - bw  // Pole radius: closer to 1 = narrower notch
+        let cs = cos(omega)
+
+        // Notch biquad: zeros on unit circle at ±centerFreq, poles just inside
+        let b0 = 1.0
+        let b1 = -2.0 * cs
+        let b2 = 1.0
+        let a0 = 1.0
+        let a1 = -2.0 * r * cs
+        let a2 = r * r
+
+        // Normalize gain to unity at DC
+        let gainDC = (b0 + b1 + b2) / (a0 + a1 + a2)
+        let section = [b0 / (a0 * gainDC), b1 / (a0 * gainDC), b2 / (a0 * gainDC), a1 / a0, a2 / a0]
+
+        // Zero-phase: forward + backward pass
+        var result = applyBiquadCascade(signal, sections: [section])
+        result.reverse()
+        result = applyBiquadCascade(result, sections: [section])
+        result.reverse()
+
+        return result
+    }
+
     // MARK: - Welch PSD
 
     /// Compute Power Spectral Density using Welch's method.
@@ -288,6 +321,114 @@ struct SignalProcessor {
         )
 
         return (cleanData, stats)
+    }
+
+    // MARK: - Annotation-Based Exclusion
+
+    /// Remove excluded time ranges from multi-channel data.
+    /// Merges overlapping ranges, then concatenates non-excluded segments.
+    static func applyExclusions(_ data: [[Float]], sfreq: Float, exclusions: [(start: Float, end: Float)]) -> [[Float]] {
+        guard !exclusions.isEmpty, let firstChannel = data.first else { return data }
+        let totalSamples = firstChannel.count
+        let nChannels = data.count
+
+        // Sort and merge overlapping exclusion ranges
+        let sorted = exclusions.sorted { $0.start < $1.start }
+        var merged = [(start: Int, end: Int)]()
+        for ex in sorted {
+            let s = max(0, Int(ex.start * sfreq))
+            let e = min(totalSamples, Int(ex.end * sfreq))
+            guard s < e else { continue }
+            if let last = merged.last, s <= last.end {
+                merged[merged.count - 1] = (start: last.start, end: max(last.end, e))
+            } else {
+                merged.append((start: s, end: e))
+            }
+        }
+
+        // Build included (non-excluded) ranges
+        var included = [(start: Int, end: Int)]()
+        var pos = 0
+        for ex in merged {
+            if pos < ex.start {
+                included.append((start: pos, end: ex.start))
+            }
+            pos = ex.end
+        }
+        if pos < totalSamples {
+            included.append((start: pos, end: totalSamples))
+        }
+
+        guard !included.isEmpty else { return data.map { _ in [Float]() } }
+
+        // Concatenate included segments
+        let totalIncluded = included.reduce(0) { $0 + ($1.end - $1.start) }
+        var result = [[Float]](repeating: [Float](repeating: 0, count: totalIncluded), count: nChannels)
+        var writePos = 0
+        for range in included {
+            let count = range.end - range.start
+            for ch in 0..<nChannels {
+                result[ch].replaceSubrange(writePos..<writePos + count,
+                                            with: data[ch][range.start..<range.end])
+            }
+            writePos += count
+        }
+
+        return result
+    }
+
+    // MARK: - Bad Channel Interpolation
+
+    /// Replace bad channel data with distance-weighted spatial interpolation from neighbors.
+    /// Uses 2D electrode positions from Constants.electrodePositions2D.
+    /// Must be called BEFORE average referencing to prevent bad channel noise from spreading.
+    static func interpolateBadChannels(_ data: [[Float]], channels: [String], badChannelIndices: Set<Int>) -> [[Float]] {
+        guard !badChannelIndices.isEmpty, !data.isEmpty, channels.count == data.count else { return data }
+        let nChannels = data.count
+        let nSamples = data[0].count
+        var result = data
+
+        for badIdx in badChannelIndices {
+            guard badIdx < nChannels else { continue }
+            let badName = channels[badIdx]
+            guard let badPos = Constants.electrodePositions2D[badName] else { continue }
+
+            // Compute inverse-distance weights from all good channels that have positions
+            var weights = [Float]()
+            var goodIndices = [Int]()
+            for ch in 0..<nChannels {
+                guard !badChannelIndices.contains(ch) else { continue }
+                let chName = channels[ch]
+                guard let chPos = Constants.electrodePositions2D[chName] else { continue }
+                let dx = badPos.x - chPos.x
+                let dy = badPos.y - chPos.y
+                let dist = sqrtf(dx * dx + dy * dy)
+                guard dist > 1e-6 else { continue }
+                // Inverse-distance squared weighting (closer neighbors contribute more)
+                let w = 1.0 / (dist * dist)
+                weights.append(w)
+                goodIndices.append(ch)
+            }
+
+            guard !weights.isEmpty else { continue }
+
+            // Normalize weights
+            let totalWeight = weights.reduce(0, +)
+            let normalizedWeights = weights.map { $0 / totalWeight }
+
+            // Interpolate sample-by-sample using vDSP for performance
+            var interpolated = [Float](repeating: 0, count: nSamples)
+            for (i, goodIdx) in goodIndices.enumerated() {
+                var w = normalizedWeights[i]
+                var scaled = [Float](repeating: 0, count: nSamples)
+                vDSP_vsmul(data[goodIdx], 1, &w, &scaled, 1, vDSP_Length(nSamples))
+                vDSP_vadd(interpolated, 1, scaled, 1, &interpolated, 1, vDSP_Length(nSamples))
+            }
+
+            result[badIdx] = interpolated
+        }
+
+        return result
     }
 
     // MARK: - Z-Scores (Within-Subject)
