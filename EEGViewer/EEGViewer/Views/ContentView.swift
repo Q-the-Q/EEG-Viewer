@@ -97,22 +97,28 @@ struct ContentView: View {
     }
 
     private func loadFile(tempURL: URL, originalURL: URL) {
-        do {
-            let data = try EDFReader.read(url: tempURL)
-            self.edfData = data
-            self.loadedFileURL = originalURL
-            self.annotationStore.load(for: originalURL)
-            self.loadedFilename = originalURL.lastPathComponent
-            self.errorMessage = nil
-            // Reset analyzers so stale results from previous file are cleared
-            self.analyzer.results = nil
-            self.hrvAnalyzer.results = nil
-            self.hrvAnalyzer.errorMessage = nil
-            self.hrvAnalyzer.isAnalyzing = false
-            // New ID forces SwiftUI to recreate all tab views (resets @State, re-fires .onAppear)
-            self.fileLoadID = UUID()
-        } catch {
-            self.errorMessage = error.localizedDescription
+        Task {
+            do {
+                // Parse EDF off the main thread — file I/O + Int16→Float conversion can
+                // block for several seconds on large recordings.
+                let data = try await Task.detached(priority: .userInitiated) {
+                    try EDFReader.read(url: tempURL)
+                }.value
+                self.edfData = data
+                self.loadedFileURL = originalURL
+                self.annotationStore.load(for: originalURL)
+                self.loadedFilename = originalURL.lastPathComponent
+                self.errorMessage = nil
+                // Reset analyzers so stale results from previous file are cleared
+                self.analyzer.results = nil
+                self.hrvAnalyzer.results = nil
+                self.hrvAnalyzer.errorMessage = nil
+                self.hrvAnalyzer.isAnalyzing = false
+                // New ID forces SwiftUI to recreate all tab views (resets @State, re-fires .onAppear)
+                self.fileLoadID = UUID()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
         }
     }
 }
@@ -154,6 +160,14 @@ struct DocumentPicker: UIViewControllerRepresentable {
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
             try? FileManager.default.removeItem(at: tempURL)
             try? FileManager.default.copyItem(at: url, to: tempURL)
+
+            // Also copy annotation sidecar if it exists (while we still have security scope)
+            let sidecarURL = AnnotationStore.annotationURL(for: url)
+            if FileManager.default.fileExists(atPath: sidecarURL.path) {
+                let tempSidecar = AnnotationStore.annotationURL(for: tempURL)
+                try? FileManager.default.removeItem(at: tempSidecar)
+                try? FileManager.default.copyItem(at: sidecarURL, to: tempSidecar)
+            }
 
             onPick(tempURL, url)
         }

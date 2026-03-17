@@ -224,34 +224,49 @@ class QEEGAnalyzer: ObservableObject {
             zscores[band.name] = SignalProcessor.zscoresWithin(rp)
         }
 
-        // Step 5: Coherence — compute once per pair, extract all bands at once
+        // Step 5: Coherence — all N(N-1)/2 pairs computed in parallel
         await updateProgress(0.35, "Computing coherence...")
         let coherenceMatrices = await Task.detached(priority: .userInitiated) {
-            // Use smaller nperseg (512) for faster coherence — less freq resolution but much faster
             let cohNperseg = 512
             let cohNoverlap = 256
+            let bandDefs = Constants.freqBands.map { (name: $0.name, low: $0.low, high: $0.high) }
 
-            // Initialize matrices for all bands
-            var matrices = [String: [[Float]]]()
-            for band in Constants.freqBands {
-                matrices[band.name] = [[Float]](repeating: [Float](repeating: 0, count: nChannels), count: nChannels)
-                // Diagonal = 1.0
-                for i in 0..<nChannels { matrices[band.name]![i][i] = 1.0 }
+            // Pre-enumerate all unique pairs — each is fully independent
+            var pairs = [(Int, Int)]()
+            pairs.reserveCapacity(nChannels * (nChannels - 1) / 2)
+            for i in 0..<nChannels {
+                for j in (i + 1)..<nChannels { pairs.append((i, j)) }
             }
 
-            // Compute coherence once per pair, extract all 4 bands
-            for i in 0..<nChannels {
-                for j in (i + 1)..<nChannels {
+            // Each element stores band-coherence values for one pair.
+            // Use UnsafeMutableBufferPointer for thread-safe concurrent element writes
+            // (Swift Array element writes from multiple threads are not guaranteed safe).
+            var pairResults = [[(String, Float)]](repeating: [], count: pairs.count)
+
+            // concurrentPerform spreads work across all performance cores (synchronous barrier)
+            pairResults.withUnsafeMutableBufferPointer { buf in
+                DispatchQueue.concurrentPerform(iterations: pairs.count) { idx in
+                    let (i, j) = pairs[idx]
                     let (cohFreqs, coh) = SignalProcessor.coherence(
                         cleanData[i], cleanData[j], sfreq: sfreq,
                         nperseg: cohNperseg, noverlap: cohNoverlap
                     )
-                    // Extract band coherence for all 4 bands from this single computation
-                    for band in Constants.freqBands {
-                        let bandCoh = SignalProcessor.bandCoherence(coh, freqs: cohFreqs, low: band.low, high: band.high)
-                        matrices[band.name]![i][j] = bandCoh
-                        matrices[band.name]![j][i] = bandCoh
+                    buf[idx] = bandDefs.map { band in
+                        (band.name, SignalProcessor.bandCoherence(coh, freqs: cohFreqs, low: band.low, high: band.high))
                     }
+                }
+            }
+
+            // Assemble matrices — serial, but O(pairs) not O(pairs × FFT)
+            var matrices = [String: [[Float]]]()
+            for band in Constants.freqBands {
+                matrices[band.name] = [[Float]](repeating: [Float](repeating: 0, count: nChannels), count: nChannels)
+                for i in 0..<nChannels { matrices[band.name]![i][i] = 1.0 }
+            }
+            for (idx, (i, j)) in pairs.enumerated() {
+                for (bandName, value) in pairResults[idx] {
+                    matrices[bandName]![i][j] = value
+                    matrices[bandName]![j][i] = value
                 }
             }
             return matrices
