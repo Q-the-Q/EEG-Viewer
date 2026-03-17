@@ -28,8 +28,11 @@ Built with PyQt5 for the GUI, MNE-Python for EEG data handling, and matplotlib f
 Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerate framework for high-performance DSP. Zero external dependencies — EDF parsing, FFT, and all signal processing use only Apple frameworks.
 
 **Features:**
-- **EEG Waveform Viewer**: multi-channel scrollable waveform display with pinch-to-zoom, amplitude scaling, and time window control
-- **Band Waveforms**: filtered waveform traces per frequency band (Delta, Theta, Alpha, Beta)
+- **EEG Waveform Viewer**: multi-channel scrollable waveform display with pinch-to-zoom, amplitude scaling, and time window control (2s–60s, Half, All)
+- **Waveform Annotations**: long-press to create time-range annotations (works with finger, mouse, trackpad, and Apple Pencil). Annotations have configurable labels (Artifact, Eyes Open, Movement, or custom) with analysis modes: `exclude` (removed from qEEG) or `analyzeSeparately`. Drag handles for resizing, long-press to edit/delete. Persisted as `.annotations.json` sidecar files with import support for cross-device sharing.
+- **Bad Channel Management**: mark noisy/flat channels as bad via the channel selector — they render in red and are spatially interpolated (inverse-distance-squared weighted average from neighboring electrodes) before average referencing, preventing contamination across all channels.
+- **Notch Filter**: tunable power line noise removal (50/55/60/65 Hz dropdown) with toggle, applied across all analysis tabs. Zero-phase IIR biquad design preserves phase relationships for coherence analysis.
+- **Band Waveforms**: filtered waveform traces per frequency band (Delta, Theta, Alpha, Beta) with spectrogram heatmap
 - **qEEG Analysis Dashboard**:
   - **Magnitude Spectra**: Frontal, Central, and Posterior region amplitude spectra (1–30 Hz) with shared Y-axis scaling using Swift Charts
   - **Topographic Z-Score Maps**: four interpolated head maps (Delta, Theta, Alpha, Beta) rendered via CoreGraphics with a custom clinical colormap
@@ -40,6 +43,8 @@ Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerat
 - **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared asymmetry axis ranges across recordings for consistent visual comparison. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage). Works on iPad and when running the iPad app on Mac.
 - **3D Brain Visualization**: interactive SceneKit brain model with per-vertex electrode color blending (inverse-distance-squared weighting from 3 nearest electrodes), real-time Z-score heatmap updates, mesh decimation (~300k→40k vertices inner, ~150k→12k outer), Fresnel edge-glow shader on translucent outer shell, and async mesh loading for responsive startup
 - **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording
+- **Heart Rate Analysis**: automatic ECG channel detection with HRV analysis dashboard
+- **Mac Catalyst Support**: runs natively on Apple Silicon Macs via Mac Catalyst (same codebase as iPad)
 
 ---
 
@@ -74,10 +79,10 @@ pip install -r requirements.txt
 
 ### iPadOS App
 
-**Requirements:** Xcode 15+ · iPadOS 16+ (uses `ImageRenderer`, Swift Charts)
+**Requirements:** Xcode 15+ · iPadOS 16+ / macOS 13+ via Mac Catalyst (uses `ImageRenderer`, Swift Charts)
 
 1. Open `EEGViewer/EEGViewer.xcodeproj` in Xcode
-2. Select your iPad device or simulator as the build target
+2. Select your iPad device, simulator, or **"My Mac (Mac Catalyst)"** as the build target
 3. Build and run (⌘R)
 
 No external dependencies — the app uses only Apple frameworks (SwiftUI, Accelerate, CoreGraphics, SceneKit, Charts).
@@ -103,10 +108,13 @@ python main.py
 
 1. Tap **"Open EDF File"** on the welcome screen (or the toolbar button)
 2. Select a `.edf` file from Files
-3. Navigate tabs: **EEG Waveform** → **Band Waveforms** → **qEEG Analysis** → **3D Brain**
-4. In the qEEG Analysis tab, tap **"Run qEEG Analysis"** to compute
-5. Use **"Add Comparison EDF"** to load additional recordings for side-by-side comparison
-6. Tap **"Export PDF"** to generate and share a clinical report
+3. Navigate tabs: **EEG Waveform** → **Band Waveforms** → **qEEG Analysis** → **3D Brain** → **Heart**
+4. **Annotate**: Long-press on the waveform to create an annotation. Select a label type from the pill bar above the waveform. Drag handles to resize. Long-press an existing annotation to edit or delete.
+5. **Mark bad channels**: Tap the channel selector icon, then tap the warning triangle next to noisy channels. Bad channels appear in red and are interpolated during analysis.
+6. **Notch filter**: Toggle the waveform icon and select frequency (50/55/60/65 Hz) to remove power line noise.
+7. In the qEEG Analysis tab, tap **"Run qEEG Analysis"** to compute
+8. Use **"Add Comparison EDF"** to load additional recordings for side-by-side comparison
+9. Tap **"Export PDF"** to generate and share a clinical report
 
 ---
 
@@ -166,9 +174,15 @@ Before analysis, the raw EEG data undergoes the following preprocessing steps:
 
 1. **Channel Renaming**: Strip device-specific prefixes (e.g., "EEG Fp1" becomes "Fp1") and convert old nomenclature (T3/T4/T5/T6 to T7/T8/P7/P8)
 
-2. **Average Re-referencing**: Raw EEG from hardware devices is recorded against a single physical reference electrode. This common signal can dominate the data. Re-referencing to the average of all 19 EEG channels (`raw.set_eeg_reference("average")`) removes the common signal and produces voltage distributions that better reflect underlying cortical sources. This step is critical - without it, spectral amplitudes may be inflated by 3-5x.
+2. **Bad Channel Interpolation** *(iPadOS/Mac)*: Channels marked as bad are spatially interpolated using inverse-distance-squared weighting from neighboring good electrodes (based on standard 10-20 positions). This step occurs **before** average referencing to prevent noise from one bad channel from contaminating all channels through the common average.
 
-3. **High-pass Filtering at 1 Hz**: A 1 Hz high-pass filter removes slow DC drift and attenuates low-frequency artifacts such as eye blinks (which primarily affect frontal channels) and electrode drift. Clinical qEEG software applies similar preprocessing.
+3. **Average Re-referencing**: Raw EEG from hardware devices is recorded against a single physical reference electrode. This common signal can dominate the data. Re-referencing to the average of all 19 EEG channels (`raw.set_eeg_reference("average")`) removes the common signal and produces voltage distributions that better reflect underlying cortical sources. This step is critical - without it, spectral amplitudes may be inflated by 3-5x.
+
+4. **High-pass Filtering at 1 Hz**: A 1 Hz high-pass filter removes slow DC drift and attenuates low-frequency artifacts such as eye blinks (which primarily affect frontal channels) and electrode drift. Clinical qEEG software applies similar preprocessing.
+
+5. **Notch Filter** *(iPadOS/Mac)*: A zero-phase IIR notch (band-reject) filter removes power line noise at the selected frequency (50 or 60 Hz). Uses a 2nd-order biquad with zeros on the unit circle at the target frequency for sharp rejection, and forward-backward filtering to preserve phase. Configurable via dropdown (50/55/60/65 Hz) with toggle.
+
+6. **Annotation Exclusions** *(iPadOS/Mac)*: Time ranges marked with "exclude" labels (e.g., Artifact, Eyes Open, Movement) are removed from the signal before spectral analysis. Overlapping ranges are merged, and the remaining clean segments are concatenated.
 
 4. **Impedance Detection & Adaptive Filtering**: Before artifact rejection, the software automatically detects high-impedance (poor-quality) channels by analyzing:
    - **Low-frequency noise floor** (0.5-2 Hz) — high impedance shows as elevated low-freq power
@@ -330,18 +344,21 @@ EEG Viewer/
                 Constants.swift          # Frequency bands, electrode positions, region maps
                 EDFData.swift            # EDF data model (signals, headers, metadata)
                 EDFReader.swift          # Pure-Swift EDF parser (no dependencies)
+                EEGAnnotation.swift      # Annotation data model, labels, and JSON persistence
                 QEEGAnalyzer.swift       # Async analysis pipeline (FFT, PSD, coherence)
-                SignalProcessor.swift    # DSP via Accelerate (Welch PSD, filtering, coherence)
+                SignalProcessor.swift    # DSP via Accelerate (Welch PSD, filtering, notch, coherence)
             Views/
                 ContentView.swift        # Tab navigation, file picker, data management
-                WaveformView.swift       # Multi-channel EEG waveform display
-                BandPowerView.swift      # Per-band filtered waveform traces
+                WaveformView.swift       # Multi-channel EEG waveform display with annotations
+                AnnotationLabelEditor.swift  # Annotation label management sheet
+                BandPowerView.swift      # Per-band filtered waveform traces + spectrogram
                 QEEGDashboard.swift      # qEEG dashboard + multi-EDF comparison manager
                 SpectraChartView.swift   # Regional magnitude spectra (Swift Charts)
                 TopoMapView.swift        # Topographic Z-score head map
                 CoherenceHeatmapView.swift  # Coherence heatmap (Canvas)
                 AsymmetryChartView.swift # Hemispheric asymmetry bar chart (Swift Charts)
                 BrainView3D.swift        # 3D brain visualization (SceneKit)
+                HeartDashboard.swift     # ECG/HRV analysis dashboard
             Utilities/
                 ColorMap.swift           # Clinical-style colormap (blue → white → red)
                 TopoMapRenderer.swift    # CoreGraphics topomap renderer (interpolation + head outline)
@@ -390,7 +407,7 @@ Tested with recordings from the **Zeto WR-19** wireless EEG headset.
 ## Limitations and Caveats
 
 - **Normative Z-scores are approximate**: The built-in normative values are derived from published aggregate literature, not from a comprehensive age/sex-stratified database. For clinical interpretation, a validated normative database (e.g., Thatcher NeuroGuide, BrainDx) should be used.
-- **Automated artifact rejection only**: The application uses a fixed peak-to-peak amplitude threshold (100 µV) for artifact rejection. While effective for gross artifacts (movement, muscle bursts, electrode pops), it does not include more sophisticated methods like ICA-based eye artifact removal, spatial filtering, or manual epoch review. Clinical qEEG software may use additional artifact detection strategies.
+- **Automated + manual artifact rejection**: The application uses a fixed peak-to-peak amplitude threshold (100 µV) for automated artifact rejection. The iPadOS/Mac app additionally supports manual annotation-based exclusion (long-press to mark artifact regions). Neither platform includes ICA-based eye artifact removal or advanced spatial filtering.
 
 - **Fixed impedance thresholds**: Impedance detection uses fixed thresholds for low-frequency noise floor and 1/f slope. Different populations (children, elderly, patients with pathology) may require tuning these parameters for optimal detection.
 - **Limited comparison support**: The iPadOS app supports side-by-side comparison of up to 3 recordings. The Python desktop app analyzes one file at a time. Neither platform supports group-level statistical analysis or longitudinal treatment-response tracking.

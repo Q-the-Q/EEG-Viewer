@@ -83,7 +83,7 @@ struct SignalProcessor {
         guard centerFreq < nyquist else { return signal }  // Can't filter above Nyquist
 
         let omega = Double.pi * Double(centerFreq / nyquist)
-        let bw = Double.pi * Double(bandwidth / sfreq)  // Normalized bandwidth
+        let bw = Double.pi * Double(bandwidth / nyquist)  // Normalized bandwidth (relative to Nyquist)
         let r = 1.0 - bw  // Pole radius: closer to 1 = narrower notch
         let cs = cos(omega)
 

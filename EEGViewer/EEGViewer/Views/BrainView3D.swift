@@ -252,7 +252,7 @@ struct BrainView3D: View {
         isProcessing = true
 
         let eegData = edfData.eegData
-        let channels = edfData.channelNames
+        let channels = edfData.eegChannelNames  // Must match eegData indices, not all channels
         let sfreq = edfData.sfreq
         let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
         let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []

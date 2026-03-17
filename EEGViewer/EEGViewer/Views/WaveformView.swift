@@ -212,6 +212,8 @@ struct WaveformView: View {
                 switch value {
                 case .second(true, let drag):
                     guard let drag = drag else { return }
+                    // Skip if we already triggered an edit popover for this gesture
+                    guard !showAnnotationEditPopover else { return }
                     if !isCreatingAnnotation {
                         // Check if long press landed on an existing annotation
                         let pressTime = currentTime + Float(drag.startLocation.x / geo.size.width) * windowSec
@@ -626,6 +628,8 @@ struct WaveformView: View {
     }
 
     private func startPlayback() {
+        // Can't play when the entire recording fits in the window
+        guard windowSec < edfData.duration else { return }
         isPlaying = true
         timer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
             .autoconnect()

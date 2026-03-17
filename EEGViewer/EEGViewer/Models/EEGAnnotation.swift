@@ -95,6 +95,7 @@ class AnnotationStore: ObservableObject {
     @Published var annotations: [EEGAnnotation]
     @Published var badChannelIndices: Set<Int> = []
     private(set) var currentURL: URL?
+    private var isAccessingSecurityScope = false
 
     init() {
         self.labels = Self.defaultLabels()
@@ -162,7 +163,13 @@ class AnnotationStore: ObservableObject {
 
         // Security-scoped access for reading from the original file location
         let accessing = edfURL.startAccessingSecurityScopedResource()
-        defer { if accessing { edfURL.stopAccessingSecurityScopedResource() } }
+        if accessing { isAccessingSecurityScope = true }
+        defer {
+            if accessing {
+                edfURL.stopAccessingSecurityScopedResource()
+                isAccessingSecurityScope = false
+            }
+        }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
             // Try App Support fallback (iPad may have saved here)
@@ -193,7 +200,10 @@ class AnnotationStore: ObservableObject {
 
             // Try writing next to the original EDF (works on Mac, may fail on iPad)
             let sidecarURL = Self.annotationURL(for: edfURL)
-            let accessing = edfURL.startAccessingSecurityScopedResource()
+
+            // Only acquire security scope if not already held (prevents ref count imbalance)
+            let needsAccess = !isAccessingSecurityScope
+            let accessing = needsAccess ? edfURL.startAccessingSecurityScopedResource() : false
             defer { if accessing { edfURL.stopAccessingSecurityScopedResource() } }
 
             do {
@@ -302,8 +312,9 @@ class AnnotationStore: ObservableObject {
         save()
     }
 
-    /// Removes all annotations referencing the given label ID.
+    /// Removes all annotations referencing the given label ID and saves.
     func removeAnnotations(forLabel labelID: UUID) {
         annotations.removeAll { $0.labelID == labelID }
+        save()
     }
 }
