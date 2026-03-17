@@ -180,10 +180,19 @@ struct BandPowerView: View {
             let referenced = SignalProcessor.averageReference(interpolated)
             let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
+            // Exclude bad channels from GFP/spectrogram — interpolated data is only
+            // useful for clean average reference, not for spectral analysis
+            let goodFiltered: [[Float]]
+            if badChannels.isEmpty {
+                goodFiltered = filtered
+            } else {
+                goodFiltered = filtered.enumerated().compactMap { badChannels.contains($0.offset) ? nil : $0.element }
+            }
+
             // Decimate to 50 Hz for band analysis (1-25 Hz range)
             let decimFactor = max(1, Int(sfreq / 50.0))
             let decimSfreq = sfreq / Float(decimFactor)
-            let decimated = filtered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
+            let decimated = goodFiltered.map { SignalProcessor.decimate($0, factor: decimFactor, sfreq: sfreq) }
 
             // Compute band GFP traces on decimated data
             var bandNames = [String]()
@@ -203,7 +212,7 @@ struct BandPowerView: View {
             // Decimate to ~128 Hz (Nyquist = 64 Hz, supports 50 Hz display)
             let specDecimFactor = max(1, Int(sfreq / 128.0))
             let specDecimSfreq = sfreq / Float(specDecimFactor)
-            let specDecimated = filtered.map { SignalProcessor.decimate($0, factor: specDecimFactor, sfreq: sfreq) }
+            let specDecimated = goodFiltered.map { SignalProcessor.decimate($0, factor: specDecimFactor, sfreq: sfreq) }
 
             let specGfp = SignalProcessor.globalFieldPower(specDecimated)
 
