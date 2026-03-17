@@ -161,7 +161,15 @@ enum Constants {
     static let ecgBandpassHigh: Float = 15.0             // Hz for R-peak preprocessing
 
     // Heart-Brain Coherence
-    static let heartBrainCoherenceBand: (low: Float, high: Float) = (0.04, 0.15)
+    static let heartBrainCoherenceBands: [(name: String, low: Float, high: Float)] = [
+        ("Delta", 1.0, 4.0),
+        ("Theta", 4.0, 8.0),
+        ("Alpha", 8.0, 13.0),
+    ]
+    static let heartBrainCoherenceLFBand: (low: Float, high: Float) = (0.04, 0.15)
+    static let heartBrainCoherenceMinNperseg: Int = 128  // Minimum FFT segment length at 4 Hz
+    static let heartBrainCoherenceMaxNperseg: Int = 256  // Maximum (use if data permits)
+    static let eegArtifactThresholdUV: Float = 100.0     // Peak-to-peak µV for epoch rejection
     static let eegEnvelopeWindowSec: Float = 2.0         // Window for EEG band power envelope
     static let eegEnvelopeStepSec: Float = 0.25          // Step size for sliding window → 4 Hz output
 
