@@ -236,7 +236,8 @@ struct QEEGDashboard: View {
 
             Button {
                 let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
-                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions) }
+                let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
+                Task { await analyzer.analyze(edfData: edfData, filename: primaryFilename, exclusions: exclusions, badChannelIndices: badChannels) }
             } label: {
                 Label("Run qEEG Analysis", systemImage: "waveform.path.ecg")
                     .font(.title3)

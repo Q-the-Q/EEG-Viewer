@@ -168,12 +168,16 @@ struct BandPowerView: View {
         isProcessing = true
 
         let eegData = edfData.eegData
+        let channels = edfData.channelNames
         let sfreq = edfData.sfreq
         let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+        let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
         let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (traces, specResult, processedSfreq, specImg) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegFiltered)
+            // Interpolate bad channels before average reference to prevent noise spreading
+            let interpolated = SignalProcessor.interpolateBadChannels(eegFiltered, channels: channels, badChannelIndices: badChannels)
+            let referenced = SignalProcessor.averageReference(interpolated)
             let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
             // Decimate to 50 Hz for band analysis (1-25 Hz range)

@@ -32,6 +32,10 @@ struct AnnotationLabelEditor: View {
                     }
                 }
                 .onDelete { indices in
+                    // Cascade: remove any annotations referencing deleted labels
+                    for index in indices {
+                        store.removeAnnotations(forLabel: store.labels[index].id)
+                    }
                     store.labels.remove(atOffsets: indices)
                     store.save()
                 }

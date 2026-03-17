@@ -163,6 +163,13 @@ struct WaveformView: View {
         .onDisappear {
             stopPlayback()
         }
+        .onChange(of: annotationStore.labels.count) { _ in
+            // Reset activeLabelID if the current label was deleted
+            if let activeID = activeLabelID,
+               !annotationStore.labels.contains(where: { $0.id == activeID }) {
+                activeLabelID = annotationStore.labels.first?.id
+            }
+        }
         .sheet(isPresented: $showChannelSelector) {
             channelSelectorSheet
         }
@@ -269,13 +276,16 @@ struct WaveformView: View {
                     switch edge {
                     case .leading:
                         if clampedTime < annotation.endTime - 0.1 {
-                            annotationStore.updateAnnotation(annotationID, startTime: clampedTime)
+                            annotationStore.updateAnnotationInMemory(annotationID, startTime: clampedTime)
                         }
                     case .trailing:
                         if clampedTime > annotation.startTime + 0.1 {
-                            annotationStore.updateAnnotation(annotationID, endTime: clampedTime)
+                            annotationStore.updateAnnotationInMemory(annotationID, endTime: clampedTime)
                         }
                     }
+                }
+                .onEnded { _ in
+                    annotationStore.save()
                 }
         )
     }

@@ -281,8 +281,9 @@ class AnnotationStore: ObservableObject {
         save()
     }
 
-    /// Updates fields of an existing annotation and saves.
-    func updateAnnotation(_ id: UUID, startTime: Float? = nil, endTime: Float? = nil, labelID: UUID? = nil) {
+    /// Updates fields of an existing annotation in memory only (no disk write).
+    /// Use this during high-frequency gesture callbacks (e.g. drag .onChanged).
+    func updateAnnotationInMemory(_ id: UUID, startTime: Float? = nil, endTime: Float? = nil, labelID: UUID? = nil) {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         var annotation = annotations[index]
         let newStart = startTime ?? annotation.startTime
@@ -293,6 +294,16 @@ class AnnotationStore: ObservableObject {
             annotation.labelID = labelID
         }
         annotations[index] = annotation
+    }
+
+    /// Updates fields of an existing annotation and saves to disk.
+    func updateAnnotation(_ id: UUID, startTime: Float? = nil, endTime: Float? = nil, labelID: UUID? = nil) {
+        updateAnnotationInMemory(id, startTime: startTime, endTime: endTime, labelID: labelID)
         save()
+    }
+
+    /// Removes all annotations referencing the given label ID.
+    func removeAnnotations(forLabel labelID: UUID) {
+        annotations.removeAll { $0.labelID == labelID }
     }
 }

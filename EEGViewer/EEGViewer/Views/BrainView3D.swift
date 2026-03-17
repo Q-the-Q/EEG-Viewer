@@ -222,12 +222,16 @@ struct BrainView3D: View {
         isProcessing = true
 
         let eegData = edfData.eegData
+        let channels = edfData.channelNames
         let sfreq = edfData.sfreq
         let exclusions = applyAnnotations ? annotationStore.excludedTimeRanges() : []
+        let badChannels = applyAnnotations ? annotationStore.badChannelIndices : []
         let eegFiltered = exclusions.isEmpty ? eegData : SignalProcessor.applyExclusions(eegData, sfreq: sfreq, exclusions: exclusions)
 
         let (powerData, times) = await Task.detached(priority: .userInitiated) {
-            let referenced = SignalProcessor.averageReference(eegFiltered)
+            // Interpolate bad channels before average reference to prevent noise spreading
+            let interpolated = SignalProcessor.interpolateBadChannels(eegFiltered, channels: channels, badChannelIndices: badChannels)
+            let referenced = SignalProcessor.averageReference(interpolated)
             let filtered = referenced.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
 
             let decimFactor = max(1, Int(sfreq / 50.0))
