@@ -352,8 +352,10 @@ struct SignalProcessor {
             }
         }
 
-        // Progressive threshold relaxation (same as rejectArtifacts)
-        let thresholdsUV: [Float] = [thresholdUV, 150, 200, 300, 500]
+        // Progressive threshold relaxation (same as rejectArtifacts).
+        // Build list relative to caller's threshold to avoid duplicates/backwards steps.
+        let relaxedSteps: [Float] = [150, 200, 300, 500]
+        let thresholdsUV: [Float] = [thresholdUV] + relaxedSteps.filter { $0 > thresholdUV }
         for tryThreshUV in thresholdsUV {
             let tryThreshV = tryThreshUV * 1e-6
             var mask = [Bool](repeating: false, count: nEpochs)

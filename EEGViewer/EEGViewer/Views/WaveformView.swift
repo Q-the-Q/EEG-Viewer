@@ -4,7 +4,6 @@
 
 import SwiftUI
 import Combine
-import Accelerate
 
 struct WaveformView: View {
     let edfData: EDFData
@@ -66,7 +65,7 @@ struct WaveformView: View {
         let rawData = edfData.eegData
         let sfreq = edfData.sfreq
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task.detached(priority: .userInitiated) {
             // Average reference only — skip highpass to avoid IIR biquad edge effects
             // that inflate peak-to-peak beyond what the analysis pipeline produces
             let data = SignalProcessor.averageReference(rawData)
@@ -78,7 +77,7 @@ struct WaveformView: View {
             let total = result.mask.count
             print("[ArtifactMask] \(rejected)/\(total) rejected, threshold=\(result.effectiveThresholdUV)uV")
 
-            DispatchQueue.main.async {
+            await MainActor.run {
                 artifactMask = result.mask
                 artifactThresholdUV = result.effectiveThresholdUV
             }
