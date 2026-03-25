@@ -42,7 +42,7 @@ Native Swift application built with SwiftUI, Swift Charts, and Apple's Accelerat
 - **Multi-EDF Comparison**: compare up to 3 EDF recordings side-by-side (1 primary + 2 comparisons) with synchronized band selection and shared spectra Y-axis
 - **PDF Export**: multi-page clinical report with all chart sections, coherence/asymmetry rendered for all 4 bands and grouped by band for easy comparison across recordings. Shared asymmetry axis ranges across recordings for consistent visual comparison. Shared via `UIActivityViewController` (Save to Files, AirDrop, email, iMessage). Works on iPad and when running the iPad app on Mac.
 - **3D Brain Visualization**: interactive SceneKit brain model with per-vertex electrode color blending (inverse-distance-squared weighting from 3 nearest electrodes), real-time Z-score heatmap updates, mesh decimation (~300k→40k vertices inner, ~150k→12k outer), Fresnel edge-glow shader on translucent outer shell, and async mesh loading for responsive startup
-- **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording
+- **Artifact Rejection**: epoch-based artifact detection with adaptive thresholds and rejection statistics displayed per recording. Visual overlay toggle on waveform view highlights rejected 2-second epochs as red shaded regions with rejection stats
 - **Heart Rate Analysis**: automatic ECG channel detection with HRV analysis dashboard including multi-band heart-brain coherence (Delta, Theta, Alpha) with EEG artifact rejection and adaptive spectral resolution
 - **Mac Catalyst Support**: runs natively on Apple Silicon Macs via Mac Catalyst (same codebase as iPad)
 

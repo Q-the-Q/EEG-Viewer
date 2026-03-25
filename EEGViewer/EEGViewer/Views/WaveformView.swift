@@ -4,7 +4,6 @@
 
 import SwiftUI
 import Combine
-import Accelerate
 
 struct WaveformView: View {
     let edfData: EDFData
@@ -59,26 +58,28 @@ struct WaveformView: View {
         return "\(rejected)/\(total) (\(String(format: "%.0f", pct))%) @\(threshStr)"
     }
 
-    /// Compute artifact mask with same preprocessing as the analysis pipeline.
+    /// Compute artifact mask for visual overlay.
+    /// Uses average reference only (no highpass) to avoid IIR filter artifacts,
+    /// with progressive threshold relaxation matching the analysis pipeline.
     private func computeArtifactMask() {
         let rawData = edfData.eegData
         let sfreq = edfData.sfreq
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            // Same preprocessing as QEEGAnalyzer: avg reference + highpass
-            var data = SignalProcessor.averageReference(rawData)
-            data = data.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+        Task.detached(priority: .userInitiated) {
+            // Average reference only — skip highpass to avoid IIR biquad edge effects
+            // that inflate peak-to-peak beyond what the analysis pipeline produces
+            let data = SignalProcessor.averageReference(rawData)
 
-            // Compute mask with progressive threshold relaxation (matches rejectArtifacts)
-            let (mask, effectiveThreshold) = SignalProcessor.getArtifactMask(data, sfreq: sfreq)
+            // Compute mask with progressive threshold relaxation
+            let result = SignalProcessor.getArtifactMask(data, sfreq: sfreq)
 
-            let rejected = mask.filter { !$0 }.count
-            let total = mask.count
-            print("[ArtifactMask] \(rejected)/\(total) rejected, threshold=\(effectiveThreshold)uV")
+            let rejected = result.mask.filter { !$0 }.count
+            let total = result.mask.count
+            print("[ArtifactMask] \(rejected)/\(total) rejected, threshold=\(result.effectiveThresholdUV)uV")
 
-            DispatchQueue.main.async {
-                artifactMask = mask
-                artifactThresholdUV = effectiveThreshold
+            await MainActor.run {
+                artifactMask = result.mask
+                artifactThresholdUV = result.effectiveThresholdUV
             }
         }
     }
