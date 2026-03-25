@@ -31,3 +31,23 @@ xcuserdata/
 # RTF planning docs
 *.rtf
 images/
+
+# Paper drafts and figures (working documents)
+docs/*.docx
+docs/*.xlsx
+docs/~$*
+docs/paper_figures/
+
+# Scan data (patient EEG recordings)
+Scans/
+
+# Xcode build artifacts
+EEGViewer/build/
+
+# Jupyter
+.ipynb_checkpoints/
+*.pkl
+
+# Temp files
+*.docx~
+Migrating from a previous session.docx

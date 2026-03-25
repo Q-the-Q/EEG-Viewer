@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Combine
+import Accelerate
 
 struct WaveformView: View {
     let edfData: EDFData
@@ -38,10 +39,48 @@ struct WaveformView: View {
     // Edit popover for long press on existing annotation
     @State private var showAnnotationEditPopover = false
     @State private var showAnnotationImporter = false
+
+    // Auto-detected artifact overlay
+    @State private var showArtifacts = false
+    @State private var artifactMask: [Bool] = []
+    @State private var artifactThresholdUV: Float = 100
     @State private var editingAnnotationID: UUID?
 
     private var activeLabel: AnnotationLabel? {
         annotationStore.labels.first { $0.id == activeLabelID }
+    }
+
+    private var artifactStatsText: String {
+        guard !artifactMask.isEmpty else { return "Artifacts" }
+        let rejected = artifactMask.filter { !$0 }.count
+        let total = artifactMask.count
+        let pct = total > 0 ? Float(rejected) / Float(total) * 100 : 0
+        let threshStr = artifactThresholdUV.isFinite ? "\(Int(artifactThresholdUV))uV" : "off"
+        return "\(rejected)/\(total) (\(String(format: "%.0f", pct))%) @\(threshStr)"
+    }
+
+    /// Compute artifact mask with same preprocessing as the analysis pipeline.
+    private func computeArtifactMask() {
+        let rawData = edfData.eegData
+        let sfreq = edfData.sfreq
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Same preprocessing as QEEGAnalyzer: avg reference + highpass
+            var data = SignalProcessor.averageReference(rawData)
+            data = data.map { SignalProcessor.highpassFilter($0, sfreq: sfreq, cutoff: 1.0) }
+
+            // Compute mask with progressive threshold relaxation (matches rejectArtifacts)
+            let (mask, effectiveThreshold) = SignalProcessor.getArtifactMask(data, sfreq: sfreq)
+
+            let rejected = mask.filter { !$0 }.count
+            let total = mask.count
+            print("[ArtifactMask] \(rejected)/\(total) rejected, threshold=\(effectiveThreshold)uV")
+
+            DispatchQueue.main.async {
+                artifactMask = mask
+                artifactThresholdUV = effectiveThreshold
+            }
+        }
     }
 
     var body: some View {
@@ -84,6 +123,28 @@ struct WaveformView: View {
                     } label: {
                         Label("Import", systemImage: "square.and.arrow.down")
                             .font(.caption)
+                    }
+
+                    // Artifact overlay toggle
+                    Button {
+                        showArtifacts.toggle()
+                        if showArtifacts && artifactMask.isEmpty {
+                            computeArtifactMask()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showArtifacts
+                                ? "exclamationmark.triangle.fill"
+                                : "exclamationmark.triangle")
+                            Text(showArtifacts ? artifactStatsText : "Artifacts")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(showArtifacts ? Color.red.opacity(0.15) : Color.gray.opacity(0.1))
+                        )
+                        .foregroundColor(showArtifacts ? .red : .secondary)
                     }
 
                     Spacer()
@@ -159,6 +220,9 @@ struct WaveformView: View {
         .onAppear {
             selectedChannels = Set(edfData.eegIndices)
             activeLabelID = annotationStore.labels.first?.id
+            // Precompute artifact mask for overlay
+            // Apply same preprocessing as analysis pipeline (avg ref + highpass)
+            computeArtifactMask()
         }
         .onDisappear {
             stopPlayback()
@@ -534,6 +598,25 @@ struct WaveformView: View {
                     at: CGPoint(x: clampedStart + 4, y: 8),
                     anchor: .topLeading
                 )
+            }
+        }
+
+        // Draw artifact rejection overlays (behind waveforms, after annotations)
+        if showArtifacts && !artifactMask.isEmpty {
+            let epochSec = Constants.epochDuration
+            for (i, isClean) in artifactMask.enumerated() {
+                guard !isClean else { continue }
+                let epochStart = Float(i) * epochSec
+                let epochEnd = epochStart + epochSec
+                let startPx = CGFloat(epochStart - currentTime) / CGFloat(windowSec) * size.width
+                let endPx = CGFloat(epochEnd - currentTime) / CGFloat(windowSec) * size.width
+                guard endPx > 0 && startPx < size.width else { continue }
+
+                let clampedStart = max(0, startPx)
+                let clampedEnd = min(size.width, endPx)
+                let rect = CGRect(x: clampedStart, y: 0,
+                                  width: clampedEnd - clampedStart, height: size.height)
+                context.fill(Path(rect), with: .color(.red.opacity(0.15)))
             }
         }
 

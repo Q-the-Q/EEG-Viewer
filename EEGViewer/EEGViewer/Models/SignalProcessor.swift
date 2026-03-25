@@ -323,6 +323,55 @@ struct SignalProcessor {
         return (cleanData, stats)
     }
 
+    // MARK: - Artifact Mask (for visual overlay)
+
+    /// Returns per-epoch artifact mask without concatenating data.
+    /// `true` = clean epoch, `false` = rejected epoch.
+    /// Uses the same peak-to-peak logic AND progressive threshold relaxation
+    /// as `rejectArtifacts()` but only returns the mask and effective threshold.
+    static func getArtifactMask(_ data: [[Float]], sfreq: Float,
+                                thresholdUV: Float = Constants.artifactThresholdUV) -> (mask: [Bool], effectiveThresholdUV: Float) {
+        let nChannels = data.count
+        guard nChannels > 0, let nSamples = data.first?.count, nSamples > 0 else { return ([], thresholdUV) }
+        let epochSamples = Int(Constants.epochDuration * sfreq)
+        guard epochSamples > 0 else { return ([], thresholdUV) }
+        let nEpochs = nSamples / epochSamples
+
+        // Precompute per-epoch, per-channel peak-to-peak in Volts
+        var ptpMatrix = [[Float]](repeating: [Float](repeating: 0, count: nChannels), count: nEpochs)
+        for epoch in 0..<nEpochs {
+            let start = epoch * epochSamples
+            let end = start + epochSamples
+            for ch in 0..<nChannels {
+                let segment = Array(data[ch][start..<end])
+                var minVal: Float = 0
+                var maxVal: Float = 0
+                vDSP_minv(segment, 1, &minVal, vDSP_Length(epochSamples))
+                vDSP_maxv(segment, 1, &maxVal, vDSP_Length(epochSamples))
+                ptpMatrix[epoch][ch] = maxVal - minVal
+            }
+        }
+
+        // Progressive threshold relaxation (same as rejectArtifacts)
+        let thresholdsUV: [Float] = [thresholdUV, 150, 200, 300, 500]
+        for tryThreshUV in thresholdsUV {
+            let tryThreshV = tryThreshUV * 1e-6
+            var mask = [Bool](repeating: false, count: nEpochs)
+            var cleanCount = 0
+            for epoch in 0..<nEpochs {
+                let isClean = ptpMatrix[epoch].allSatisfy { $0 <= tryThreshV }
+                mask[epoch] = isClean
+                if isClean { cleanCount += 1 }
+            }
+            if cleanCount >= Constants.minCleanEpochs {
+                return (mask, tryThreshUV)
+            }
+        }
+
+        // Fallback: mark all as clean (same as rejectArtifacts)
+        return ([Bool](repeating: true, count: nEpochs), Float.infinity)
+    }
+
     // MARK: - Annotation-Based Exclusion
 
     /// Remove excluded time ranges from multi-channel data.
