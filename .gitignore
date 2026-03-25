@@ -32,11 +32,12 @@ xcuserdata/
 *.rtf
 images/
 
-# Paper drafts and figures (working documents)
-docs/*.docx
-docs/*.xlsx
-docs/~$*
-docs/paper_figures/
+# Paper drafts, figures, plans, outlines (working documents - not public)
+docs/
+CLAUDE.md
+
+# Jupyter notebooks with embedded outputs
+longitudinal/*.ipynb
 
 # Scan data (patient EEG recordings)
 Scans/
