@@ -109,13 +109,16 @@ xcodebuild -scheme EEGViewer -sdk iphoneos -destination 'id=<DEVICE_ID>' build
 
 **Working (both platforms unless noted):**
 - Full qEEG analysis pipeline (spectra, topomaps, coherence, asymmetry)
-- Configurable notch filter (50/60 Hz, auto-detect from EDF metadata)
-- Bad channel management: manual selection + auto-detection, MNE spatial interpolation (Python) / inverse-distance weighting (Swift)
-- Waveform annotations: Shift+drag creation, right-click edit/delete, JSON sidecar persistence (Python); Apple Pencil/finger/mouse/trackpad (Swift)
-- Heart rate analysis: Pan-Tompkins R-peak detection, HRV time/frequency domain, Poincare, multi-band heart-brain coherence
+- Configurable notch filter (50/55/60/65 Hz, auto-detect from EDF metadata)
+- Bad channel management: manual selection + auto-detection with visual [BAD] badges, MNE spatial interpolation (Python) / inverse-distance weighting (Swift)
+- Waveform annotations: Shift+drag creation, right-click edit/delete, JSON sidecar persistence, annotation import (Python); Apple Pencil/finger/mouse/trackpad + edge resizing (Swift)
+- Artifact rejection overlay: toggle shows rejected epochs as red regions with stats (X/Y (Z%) @NuV)
+- Progressive artifact threshold relaxation: 100->150->200->300->500 uV with min 30 clean epochs
+- Heart rate analysis: Pan-Tompkins R-peak detection, HRV time/frequency domain, Poincare, multi-band heart-brain coherence; arc gauges with normal ranges (Python), gauge cards (Swift)
 - Multi-EDF comparison (up to 3 recordings side-by-side)
+- Window size options include Half/All based on recording duration
+- Band power spectrogram (GFP time-frequency, scipy STFT with Hann window)
 - 3D brain visualization with SceneKit (Swift only)
-- Artifact rejection overlay on waveform view (Swift only)
 - Longitudinal analysis pipeline: Python modules for tracking qEEG changes across treatment courses
 - PDF export
 - Mac Catalyst support (Swift)
@@ -182,4 +185,4 @@ Detailed plans live in `docs/superpowers/plans/` and `docs/plans/`:
 
 ---
 
-*Generated 2026-03-26*
+*Updated 2026-03-26*
