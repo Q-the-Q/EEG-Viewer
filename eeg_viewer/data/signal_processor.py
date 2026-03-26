@@ -6,6 +6,7 @@ from scipy.integrate import simpson
 
 from ..utils.constants import (
     PSD_NPERSEG, PSD_NOVERLAP, PSD_WINDOW, FREQ_BANDS, TOTAL_POWER_RANGE,
+    NOTCH_BANDWIDTH,
 )
 
 # Artifact rejection defaults
@@ -113,16 +114,39 @@ class SignalProcessor:
 
         return self.channel_quality
 
-    def apply_adaptive_filtering(self, data, channel_names=None):
+    def apply_notch_filter(self, data, notch_freq):
+        """Apply zero-phase notch filter at given frequency. Returns filtered copy.
+
+        Args:
+            data: ndarray (n_channels, n_samples)
+            notch_freq: float, center frequency in Hz (0 = skip)
+        Returns:
+            filtered: ndarray (n_channels, n_samples)
+        """
+        if notch_freq <= 0:
+            return data.copy()
+
+        from scipy.signal import iirnotch
+        nyquist = self.sfreq / 2.0
+        quality_factor = notch_freq / NOTCH_BANDWIDTH  # Q = f0 / bw
+        b, a = iirnotch(notch_freq / nyquist, quality_factor)
+
+        filtered = data.copy()
+        for i in range(filtered.shape[0]):
+            filtered[i] = filtfilt(b, a, filtered[i])
+        return filtered
+
+    def apply_adaptive_filtering(self, data, channel_names=None, notch_freq=50):
         """Apply channel-specific filtering based on impedance assessment.
 
         High-impedance channels get stronger low-pass and notch filtering:
-        - Good channels: Standard 0.5 Hz high-pass + 50 Hz notch
-        - Bad channels: 1 Hz high-pass (stronger) + 50 Hz notch + additional smoothing
+        - Good channels: Standard 0.5 Hz high-pass + notch
+        - Bad channels: 1 Hz high-pass (stronger) + notch + additional smoothing
 
         Args:
             data: Array of shape (n_channels, n_samples) in Volts.
             channel_names: List of channel names (for mapping to quality flags).
+            notch_freq: Notch filter frequency in Hz (0 = off, 50, or 60).
 
         Returns:
             Filtered data of same shape.
@@ -146,10 +170,6 @@ class SignalProcessor:
                 b, a = butter(4, 1 / nyquist, btype='high')
                 filtered[i] = filtfilt(b, a, filtered[i])
 
-                # Notch filter at 50 Hz
-                b, a = butter(2, [49/nyquist, 51/nyquist], btype='bandstop')
-                filtered[i] = filtfilt(b, a, filtered[i])
-
                 # Additional low-pass smoothing (40 Hz cutoff)
                 b, a = butter(2, 40 / nyquist, btype='low')
                 filtered[i] = filtfilt(b, a, filtered[i])
@@ -159,9 +179,9 @@ class SignalProcessor:
                 b, a = butter(4, 0.5 / nyquist, btype='high')
                 filtered[i] = filtfilt(b, a, filtered[i])
 
-                # Notch filter at 50 Hz
-                b, a = butter(2, [49/nyquist, 51/nyquist], btype='bandstop')
-                filtered[i] = filtfilt(b, a, filtered[i])
+        # Apply notch filter to all channels (if enabled)
+        if notch_freq > 0:
+            filtered = self.apply_notch_filter(filtered, notch_freq)
 
         return filtered
 

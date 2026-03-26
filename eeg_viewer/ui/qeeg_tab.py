@@ -188,8 +188,15 @@ class QEEGTab(QWidget):
         method = self._zscore_combo.currentData()
         normative.set_method(method)
 
+        # Get notch freq and bad channels from main window
+        main_window = self.window()
+        notch_freq = main_window.get_notch_freq() if hasattr(main_window, 'get_notch_freq') else 50
+        bad_channels = getattr(main_window, '_bad_channels', [])
+
         self._analyzer = QEEGAnalyzer(
-            self._loader, processor, normative, time_range=time_range
+            self._loader, processor, normative,
+            time_range=time_range, notch_freq=notch_freq,
+            bad_channels=bad_channels,
         )
 
         # Run in background thread

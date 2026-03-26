@@ -14,13 +14,16 @@ from ..data.channel_map import REGION_MAP, ASYMMETRY_PAIRS
 class QEEGAnalyzer:
     """Runs the full qEEG analysis pipeline."""
 
-    def __init__(self, loader, processor, normative, time_range=None):
+    def __init__(self, loader, processor, normative, time_range=None,
+                 notch_freq=50, bad_channels=None):
         self.loader = loader
         self.processor = processor
         self.normative = normative
 
         # Time range for analysis: (start_sec, end_sec) or None for full recording
         self.time_range = time_range
+        self.notch_freq = notch_freq
+        self.bad_channels = bad_channels or []
 
         # EEG channel info
         self.eeg_channels = loader.get_eeg_channels()
@@ -67,6 +70,9 @@ class QEEGAnalyzer:
         self._report_progress(2, "Detecting high-impedance channels...")
         self._detect_channel_quality()
 
+        self._report_progress(3, "Interpolating bad channels...")
+        self._interpolate_bad_channels()
+
         self._report_progress(4, "Applying adaptive filtering...")
         self._apply_channel_filtering()
 
@@ -98,11 +104,30 @@ class QEEGAnalyzer:
         data, _ = self._get_eeg_data()
         self.channel_quality = self.processor.detect_impedance_issues(data, self.eeg_channels)
 
+    def _interpolate_bad_channels(self):
+        """Interpolate bad channels using MNE's spatial interpolation.
+
+        Merges auto-detected bad channels with user-specified ones, then
+        uses MNE's interpolate_bads() for spherical spline interpolation.
+        """
+        # Merge auto-detected (indices) with user-specified (names) bad channels
+        auto_bad_names = [
+            self.eeg_channels[i] for i in self.processor.bad_channels
+            if i < len(self.eeg_channels)
+        ]
+        all_bad = list(set(auto_bad_names + self.bad_channels))
+
+        if all_bad:
+            self.loader.raw.info['bads'] = all_bad
+            self.loader.raw.interpolate_bads(reset_bads=True, verbose=False)
+
     def _apply_channel_filtering(self):
         """Apply adaptive channel-specific filtering based on impedance assessment."""
         data, _ = self._get_eeg_data()
         # Store filtered data but keep original for artifact rejection
-        self._filtered_data = self.processor.apply_adaptive_filtering(data, self.eeg_channels)
+        self._filtered_data = self.processor.apply_adaptive_filtering(
+            data, self.eeg_channels, notch_freq=self.notch_freq
+        )
 
     def _reject_artifacts(self):
         """Apply epoch-based artifact rejection to EEG data.
