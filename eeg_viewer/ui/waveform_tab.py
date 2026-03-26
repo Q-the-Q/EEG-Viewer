@@ -14,7 +14,7 @@ from ..workers.playback_worker import PlaybackWorker
 from ..data.channel_map import DISPLAY_ORDER
 from ..utils.constants import (
     CHANNEL_SPACING_UV, DEFAULT_AMPLITUDE_SCALE, DEFAULT_WINDOW_SEC,
-    TRACE_COLOR, GRID_ALPHA,
+    TRACE_COLOR, GRID_ALPHA, ARTIFACT_EPOCH_SEC,
 )
 
 # ECG signals are typically 1-3 mV, while re-referenced EEG is ~10 uV.
@@ -42,6 +42,12 @@ class WaveformTab(QWidget):
         self._drag_start = None
         self._drag_region = None
 
+        # Artifact overlay state
+        self._show_artifacts = False
+        self._artifact_mask = None  # boolean array, True = clean
+        self._artifact_threshold = 0.0
+        self._artifact_regions = []
+
         self._init_ui()
         self._init_playback()
 
@@ -49,11 +55,29 @@ class WaveformTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Top bar: artifact toggle + annotation labels
+        top_bar = QHBoxLayout()
+
+        # Artifact overlay toggle
+        self._artifact_btn = QPushButton("Artifacts")
+        self._artifact_btn.setCheckable(True)
+        self._artifact_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(128,128,128,25); "
+            "border: 1px solid gray; border-radius: 10px; padding: 4px 8px; font-size: 11px; }"
+            "QPushButton:checked { background-color: rgba(255,0,0,40); "
+            "border: 1px solid red; color: red; font-weight: bold; }"
+        )
+        self._artifact_btn.setEnabled(False)
+        self._artifact_btn.clicked.connect(self._toggle_artifact_overlay)
+        top_bar.addWidget(self._artifact_btn)
+
         # Label bar for annotations (populated when annotation store is set)
         self._label_bar_layout = QHBoxLayout()
         self._label_buttons = QButtonGroup()
         self._label_buttons.setExclusive(True)
-        layout.addLayout(self._label_bar_layout)
+        top_bar.addLayout(self._label_bar_layout)
+        top_bar.addStretch()
+        layout.addLayout(top_bar)
 
         # Top area: channel selector + plot
         splitter = QSplitter(Qt.Horizontal)
@@ -111,6 +135,11 @@ class WaveformTab(QWidget):
     def set_data(self, loader):
         """Initialize display with loaded EDF data."""
         self._loader = loader
+        self._artifact_mask = None
+        self._artifact_btn.setEnabled(True)
+        self._artifact_btn.setChecked(False)
+        self._show_artifacts = False
+        self._clear_artifact_regions()
 
         # Order channels according to DISPLAY_ORDER, with unknowns at end
         ordered = []
@@ -465,3 +494,60 @@ class WaveformTab(QWidget):
     def _delete_annotation(self, ann_id):
         self.annotation_store.remove_annotation(ann_id)
         self._draw_annotations()
+
+    # --- Artifact overlay ---
+
+    def _toggle_artifact_overlay(self):
+        self._show_artifacts = self._artifact_btn.isChecked()
+        if self._show_artifacts and self._artifact_mask is None:
+            self._compute_artifact_mask()
+        if self._show_artifacts:
+            self._draw_artifact_overlay()
+        else:
+            self._clear_artifact_regions()
+        self._update_artifact_btn_text()
+
+    def _compute_artifact_mask(self):
+        """Compute artifact mask using signal processor with progressive relaxation."""
+        if not self._loader:
+            return
+        from ..data.signal_processor import SignalProcessor
+        processor = SignalProcessor(self._loader.sfreq)
+        eeg_channels = self._loader.get_eeg_channels()
+        data, _ = self._loader.get_all_data(eeg_channels)
+        self._artifact_mask, self._artifact_threshold = processor.get_artifact_mask(data)
+
+    def _update_artifact_btn_text(self):
+        if not self._show_artifacts or self._artifact_mask is None:
+            self._artifact_btn.setText("Artifacts")
+            return
+        rejected = int(np.sum(~self._artifact_mask))
+        total = len(self._artifact_mask)
+        pct = rejected / total * 100 if total > 0 else 0
+        thresh_str = f"{int(self._artifact_threshold)}uV" if np.isfinite(self._artifact_threshold) else "off"
+        self._artifact_btn.setText(f"{rejected}/{total} ({pct:.0f}%) @{thresh_str}")
+
+    def _draw_artifact_overlay(self):
+        """Draw red shaded regions for rejected epochs."""
+        self._clear_artifact_regions()
+        if self._artifact_mask is None:
+            return
+        for i, is_clean in enumerate(self._artifact_mask):
+            if is_clean:
+                continue
+            epoch_start = i * ARTIFACT_EPOCH_SEC
+            epoch_end = epoch_start + ARTIFACT_EPOCH_SEC
+            region = pg.LinearRegionItem(
+                values=[epoch_start, epoch_end],
+                movable=False,
+                brush=pg.mkBrush(255, 0, 0, 38),  # red at ~15% opacity
+                pen=pg.mkPen(None),
+            )
+            region.setZValue(-10)  # behind waveforms
+            self._plot_widget.addItem(region)
+            self._artifact_regions.append(region)
+
+    def _clear_artifact_regions(self):
+        for region in self._artifact_regions:
+            self._plot_widget.removeItem(region)
+        self._artifact_regions.clear()

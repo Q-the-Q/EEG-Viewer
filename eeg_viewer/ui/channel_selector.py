@@ -14,6 +14,7 @@ class ChannelSelector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._checkboxes = {}
+        self._bad_channels = set()
         self._init_ui()
 
     def _init_ui(self):
@@ -70,6 +71,17 @@ class ChannelSelector(QWidget):
             self._checkboxes[name] = cb
 
         self._checkbox_layout.addStretch()
+
+    def set_bad_channels(self, bad_channels):
+        """Update bad channel badges. bad_channels is a list of channel names."""
+        self._bad_channels = set(bad_channels)
+        for name, cb in self._checkboxes.items():
+            if name in self._bad_channels:
+                cb.setText(f"{name}  [BAD]")
+                cb.setStyleSheet("color: red; font-weight: bold;")
+            else:
+                cb.setText(name)
+                cb.setStyleSheet("")
 
     def get_selected(self):
         """Return list of checked channel names in order."""

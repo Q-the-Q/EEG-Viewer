@@ -192,6 +192,16 @@ class BandViewTab(QWidget):
         self._playback.set_duration(loader.duration)
         self._update_time_label(0.0)
 
+        # Add Half/All window options
+        self._window_combo.blockSignals(True)
+        while self._window_combo.count() > len(WINDOW_SIZE_OPTIONS):
+            self._window_combo.removeItem(self._window_combo.count() - 1)
+        half_dur = round(loader.duration / 2)
+        if half_dur > WINDOW_SIZE_OPTIONS[-1]:
+            self._window_combo.addItem("Half", float(half_dur))
+        self._window_combo.addItem("All", float(round(loader.duration)))
+        self._window_combo.blockSignals(False)
+
         # Get all EEG data
         eeg_channels = loader.get_eeg_channels()
         data, times = loader.get_all_data(eeg_channels)

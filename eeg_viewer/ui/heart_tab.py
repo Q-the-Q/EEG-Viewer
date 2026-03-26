@@ -2,16 +2,18 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QTableWidget, QTableWidgetItem, QSplitter,
-    QHeaderView, QProgressBar,
+    QPushButton, QSplitter, QProgressBar,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import numpy as np
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.patches import Arc
+import matplotlib.patches as mpatches
 
 from ..data.hrv_analyzer import run_full_analysis
+from ..utils.constants import HRV_RANGES
 
 
 class _AnalysisWorker(QThread):
@@ -78,16 +80,14 @@ class HeartTab(QWidget):
         ecg_layout.addWidget(self._ecg_canvas)
         splitter_top.addWidget(ecg_group)
 
-        # Metrics table
+        # Metrics gauges
         metrics_group = QGroupBox("HRV Metrics")
         metrics_layout = QVBoxLayout(metrics_group)
-        self._metrics_table = QTableWidget(0, 2)
-        self._metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
-        self._metrics_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._metrics_table.verticalHeader().setVisible(False)
-        metrics_layout.addWidget(self._metrics_table)
+        self._gauge_fig = Figure(figsize=(5, 4))
+        self._gauge_canvas = FigureCanvasQTAgg(self._gauge_fig)
+        metrics_layout.addWidget(self._gauge_canvas)
         splitter_top.addWidget(metrics_group)
-        splitter_top.setSizes([500, 300])
+        splitter_top.setSizes([500, 400])
 
         splitter_v.addWidget(splitter_top)
 
@@ -216,23 +216,100 @@ class HeartTab(QWidget):
         fd = results["frequency_domain"]
         pc = results["poincare"]
 
-        rows = [
-            ("Mean HR", f"{td['meanHR']:.1f} BPM"),
-            ("SDNN", f"{td['sdnn']:.1f} ms"),
-            ("RMSSD", f"{td['rmssd']:.1f} ms"),
-            ("pNN50", f"{td['pnn50']:.1f}%"),
-            ("SD1", f"{pc['sd1']:.1f} ms"),
-            ("SD2", f"{pc['sd2']:.1f} ms"),
-            ("LF Power", f"{fd['lf_power']:.2f} ms2"),
-            ("HF Power", f"{fd['hf_power']:.2f} ms2"),
-            ("LF/HF Ratio", f"{fd['lf_hf_ratio']:.2f}"),
-            ("Total Power", f"{fd['total_power']:.2f} ms2"),
+        self._gauge_fig.clear()
+
+        # 5 gauge metrics in a 2x3 grid (last cell has extra text metrics)
+        gauge_data = [
+            ("Mean HR", td["meanHR"], "BPM", "meanHR"),
+            ("SDNN", td["sdnn"], "ms", "sdnn"),
+            ("RMSSD", td["rmssd"], "ms", "rmssd"),
+            ("pNN50", td["pnn50"], "%", "pnn50"),
+            ("LF/HF", fd["lf_hf_ratio"], "", "lfhf"),
         ]
 
-        self._metrics_table.setRowCount(len(rows))
-        for i, (name, val) in enumerate(rows):
-            self._metrics_table.setItem(i, 0, QTableWidgetItem(name))
-            self._metrics_table.setItem(i, 1, QTableWidgetItem(val))
+        for i, (title, value, unit, key) in enumerate(gauge_data):
+            ax = self._gauge_fig.add_subplot(2, 3, i + 1)
+            self._draw_gauge(ax, title, value, unit, key)
+
+        # 6th cell: additional metrics as text
+        ax_extra = self._gauge_fig.add_subplot(2, 3, 6)
+        ax_extra.set_xlim(0, 1)
+        ax_extra.set_ylim(0, 1)
+        ax_extra.axis("off")
+        extra_lines = [
+            f"SD1: {pc['sd1']:.1f} ms",
+            f"SD2: {pc['sd2']:.1f} ms",
+            f"LF:  {fd['lf_power']:.1f} ms\u00b2",
+            f"HF:  {fd['hf_power']:.1f} ms\u00b2",
+            f"TP:  {fd['total_power']:.1f} ms\u00b2",
+        ]
+        for j, line in enumerate(extra_lines):
+            ax_extra.text(0.1, 0.85 - j * 0.18, line, fontsize=8,
+                         fontfamily='monospace', va='top')
+
+        self._gauge_fig.tight_layout(pad=0.5)
+        self._gauge_canvas.draw()
+
+    def _draw_gauge(self, ax, title, value, unit, key):
+        """Draw a semi-circular arc gauge with colored zones and needle."""
+        rng = HRV_RANGES.get(key)
+        if not rng:
+            ax.text(0.5, 0.5, f"{title}\n{value:.1f} {unit}", ha='center', va='center',
+                    transform=ax.transAxes, fontsize=9)
+            ax.axis('off')
+            return
+
+        rng_min, norm_low, norm_high, rng_max, low_label, norm_label, high_label = rng
+        ax.set_xlim(-1.3, 1.3)
+        ax.set_ylim(-0.3, 1.4)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        # Draw arc segments: low (blue), normal (green), high (orange)
+        def angle_for(v):
+            frac = (v - rng_min) / (rng_max - rng_min)
+            frac = max(0, min(1, frac))
+            return 180 - frac * 180  # 180° (left) to 0° (right)
+
+        lw = 12
+        a_min = angle_for(rng_min)
+        a_norm_low = angle_for(norm_low)
+        a_norm_high = angle_for(norm_high)
+        a_max = angle_for(rng_max)
+
+        # Low zone
+        arc_low = Arc((0, 0), 2, 2, angle=0, theta1=a_norm_low, theta2=a_min,
+                      color='#4488CC', linewidth=lw, alpha=0.4)
+        ax.add_patch(arc_low)
+        # Normal zone
+        arc_norm = Arc((0, 0), 2, 2, angle=0, theta1=a_norm_high, theta2=a_norm_low,
+                       color='#44AA44', linewidth=lw, alpha=0.6)
+        ax.add_patch(arc_norm)
+        # High zone
+        arc_high = Arc((0, 0), 2, 2, angle=0, theta1=a_max, theta2=a_norm_high,
+                       color='#CC8844', linewidth=lw, alpha=0.4)
+        ax.add_patch(arc_high)
+
+        # Needle
+        clamped = max(rng_min, min(rng_max, value))
+        needle_angle = np.radians(angle_for(clamped))
+        nx = 0.85 * np.cos(needle_angle)
+        ny = 0.85 * np.sin(needle_angle)
+        ax.plot([0, nx], [0, ny], color='#333333', linewidth=2, solid_capstyle='round')
+        ax.plot(0, 0, 'o', color='#333333', markersize=4)
+
+        # Value text
+        if value < norm_low:
+            color, label = '#CC6600', low_label
+        elif value > norm_high:
+            color, label = '#CC6600', high_label
+        else:
+            color, label = '#228B22', norm_label
+
+        ax.text(0, -0.15, f"{value:.1f} {unit}", ha='center', fontsize=10,
+                fontweight='bold', color=color)
+        ax.text(0, 1.25, title, ha='center', fontsize=9, fontweight='bold')
+        ax.text(0, -0.3, label, ha='center', fontsize=7, color=color, fontstyle='italic')
 
     def _draw_poincare(self, results):
         self._poincare_fig.clear()
