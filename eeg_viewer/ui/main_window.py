@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QMainWindow, QTabWidget, QFileDialog, QStatusBar, QAction, QMessageBox,
-    QToolBar, QPushButton, QWidget, QVBoxLayout,
+    QToolBar, QPushButton, QWidget, QVBoxLayout, QComboBox, QLabel, QDialog,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -22,6 +22,8 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._loader = EDFLoader()
+        self._bad_channels = []
+        self._auto_bad_channels = []
         self._init_ui()
         self._init_toolbar()
         self._init_menu()
@@ -72,6 +74,18 @@ class MainWindow(QMainWindow):
         open_btn.clicked.connect(self._open_file)
         toolbar.addWidget(open_btn)
 
+        # Notch filter selector
+        toolbar.addSeparator()
+        notch_label = QLabel("Notch:")
+        notch_label.setStyleSheet("margin-left: 10px;")
+        toolbar.addWidget(notch_label)
+
+        self._notch_combo = QComboBox()
+        self._notch_combo.addItems(["Off", "50 Hz", "60 Hz"])
+        self._notch_combo.setCurrentIndex(0)  # Off by default
+        self._notch_combo.setToolTip("Power line notch filter frequency")
+        toolbar.addWidget(self._notch_combo)
+
     def _init_menu(self):
         menubar = self.menuBar()
 
@@ -82,6 +96,13 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_file)
         file_menu.addAction(open_action)
+
+        bad_channels_action = QAction("Bad Channels...", self)
+        bad_channels_action.setShortcut("Ctrl+B")
+        bad_channels_action.triggered.connect(self._open_bad_channels)
+        bad_channels_action.setEnabled(False)
+        self._bad_channels_action = bad_channels_action
+        file_menu.addAction(bad_channels_action)
 
         file_menu.addSeparator()
 
@@ -115,6 +136,17 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error Loading File", str(e))
             return
 
+        # Auto-detect power line frequency from EDF header
+        line_freq = self._loader.raw.info.get('line_freq')
+        if line_freq in (50, 60):
+            idx = {50: 1, 60: 2}[int(line_freq)]
+            self._notch_combo.setCurrentIndex(idx)
+
+        # Enable bad channels menu and reset state
+        self._bad_channels_action.setEnabled(True)
+        self._bad_channels = []
+        self._auto_bad_channels = []
+
         # Update UI
         filename = file_path.split("/")[-1]
         self.setWindowTitle(f"{APP_NAME} - {filename}")
@@ -131,6 +163,29 @@ class MainWindow(QMainWindow):
         self._waveform_tab.set_data(self._loader)
         self._band_view_tab.set_data(self._loader)
         self._qeeg_tab.set_data(self._loader)
+
+    def get_notch_freq(self):
+        """Return selected notch frequency in Hz (0 = off)."""
+        text = self._notch_combo.currentText()
+        if text == "50 Hz":
+            return 50
+        elif text == "60 Hz":
+            return 60
+        return 0
+
+    def _open_bad_channels(self):
+        """Open the bad channel management dialog. Re-runs analysis if channels changed."""
+        from .bad_channel_dialog import BadChannelDialog
+        ch_names = self._loader.eeg_channel_names
+        dialog = BadChannelDialog(
+            ch_names, self._bad_channels, self._auto_bad_channels, parent=self
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            new_bad = dialog.get_bad_channels()
+            if new_bad != self._bad_channels:
+                self._bad_channels = new_bad
+                # Trigger re-analysis with updated bad channels
+                self._qeeg_tab._on_reanalyze()
 
     def _show_about(self):
         QMessageBox.about(

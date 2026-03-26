@@ -53,6 +53,11 @@ PSD_WINDOW = "hann"
 # Total power range for relative power computation
 TOTAL_POWER_RANGE = (1.0, 25.0)
 
+# Notch filter
+NOTCH_FREQ_OPTIONS = [0, 50, 60]  # 0 = off
+NOTCH_BANDWIDTH = 2.0  # Hz
+NOTCH_DEFAULT_FREQ = 0  # Off by default, auto-detect from EDF metadata
+
 # Application styling
 APP_NAME = "EEG Viewer"
 BACKGROUND_COLOR = "#FFFFFF"

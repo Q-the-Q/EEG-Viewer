@@ -14,13 +14,16 @@ from ..data.channel_map import REGION_MAP, ASYMMETRY_PAIRS
 class QEEGAnalyzer:
     """Runs the full qEEG analysis pipeline."""
 
-    def __init__(self, loader, processor, normative, time_range=None):
+    def __init__(self, loader, processor, normative, time_range=None,
+                 notch_freq=50, bad_channels=None):
         self.loader = loader
         self.processor = processor
         self.normative = normative
 
         # Time range for analysis: (start_sec, end_sec) or None for full recording
         self.time_range = time_range
+        self.notch_freq = notch_freq
+        self.bad_channels = bad_channels or []
 
         # EEG channel info
         self.eeg_channels = loader.get_eeg_channels()
@@ -48,12 +51,27 @@ class QEEGAnalyzer:
         # Progress callback (set by worker)
         self._progress_callback = None
 
-    def _get_eeg_data(self):
-        """Fetch EEG data, respecting the selected time range."""
+    def _get_eeg_data(self, use_interpolated=False):
+        """Fetch EEG data, respecting the selected time range.
+
+        Args:
+            use_interpolated: If True and bad channels were interpolated,
+                read from the private interpolated copy instead of the shared loader.
+        """
+        raw = self.loader.raw
+        if use_interpolated and hasattr(self, '_interpolated_raw') and self._interpolated_raw is not None:
+            raw = self._interpolated_raw
+
+        eeg_picks = mne.pick_channels(raw.ch_names, include=self.eeg_channels)
         if self.time_range:
             start_sec, end_sec = self.time_range
-            return self.loader.get_data_range(self.eeg_channels, start_sec, end_sec)
-        return self.loader.get_all_data(self.eeg_channels)
+            start_sample = int(start_sec * raw.info['sfreq'])
+            end_sample = int(end_sec * raw.info['sfreq'])
+            data = raw.get_data(picks=eeg_picks, start=start_sample, stop=end_sample)
+        else:
+            data = raw.get_data(picks=eeg_picks)
+        times = np.arange(data.shape[1]) / raw.info['sfreq']
+        return data, times
 
     def set_progress_callback(self, callback):
         self._progress_callback = callback
@@ -66,6 +84,9 @@ class QEEGAnalyzer:
         """Run all analyses sequentially."""
         self._report_progress(2, "Detecting high-impedance channels...")
         self._detect_channel_quality()
+
+        self._report_progress(3, "Interpolating bad channels...")
+        self._interpolate_bad_channels()
 
         self._report_progress(4, "Applying adaptive filtering...")
         self._apply_channel_filtering()
@@ -98,11 +119,36 @@ class QEEGAnalyzer:
         data, _ = self._get_eeg_data()
         self.channel_quality = self.processor.detect_impedance_issues(data, self.eeg_channels)
 
+    def _interpolate_bad_channels(self):
+        """Interpolate bad channels using MNE's spatial interpolation.
+
+        Merges auto-detected bad channels with user-specified ones, then
+        uses MNE's interpolate_bads() on a private copy to avoid mutating
+        the shared loader.raw object.
+        """
+        # Merge auto-detected (indices) with user-specified (names) bad channels
+        auto_bad_names = [
+            self.eeg_channels[i] for i in self.processor.bad_channels
+            if i < len(self.eeg_channels)
+        ]
+        all_bad = list(set(auto_bad_names + self.bad_channels))
+        self._all_bad_channels = all_bad
+
+        if all_bad:
+            raw_copy = self.loader.raw.copy()
+            raw_copy.info['bads'] = all_bad
+            raw_copy.interpolate_bads(reset_bads=True, verbose=False)
+            self._interpolated_raw = raw_copy
+        else:
+            self._interpolated_raw = None
+
     def _apply_channel_filtering(self):
         """Apply adaptive channel-specific filtering based on impedance assessment."""
-        data, _ = self._get_eeg_data()
+        data, _ = self._get_eeg_data(use_interpolated=True)
         # Store filtered data but keep original for artifact rejection
-        self._filtered_data = self.processor.apply_adaptive_filtering(data, self.eeg_channels)
+        self._filtered_data = self.processor.apply_adaptive_filtering(
+            data, self.eeg_channels, notch_freq=self.notch_freq
+        )
 
     def _reject_artifacts(self):
         """Apply epoch-based artifact rejection to EEG data.

@@ -188,8 +188,19 @@ class QEEGTab(QWidget):
         method = self._zscore_combo.currentData()
         normative.set_method(method)
 
+        # Get notch freq and bad channels from main window; disable controls during analysis
+        main_window = self.window()
+        notch_freq = main_window.get_notch_freq() if hasattr(main_window, 'get_notch_freq') else 50
+        bad_channels = getattr(main_window, '_bad_channels', [])
+        if hasattr(main_window, '_notch_combo'):
+            main_window._notch_combo.setEnabled(False)
+        if hasattr(main_window, '_bad_channels_action'):
+            main_window._bad_channels_action.setEnabled(False)
+
         self._analyzer = QEEGAnalyzer(
-            self._loader, processor, normative, time_range=time_range
+            self._loader, processor, normative,
+            time_range=time_range, notch_freq=notch_freq,
+            bad_channels=bad_channels,
         )
 
         # Run in background thread
@@ -239,6 +250,17 @@ class QEEGTab(QWidget):
         self._zscore_combo.setEnabled(True)
         self._export_btn.setEnabled(True)
         self._reanalyze_btn.setEnabled(True)
+
+        # Re-enable toolbar controls and propagate auto-detected bad channels
+        main_window = self.window()
+        if hasattr(main_window, '_notch_combo'):
+            main_window._notch_combo.setEnabled(True)
+        if hasattr(main_window, '_bad_channels_action'):
+            main_window._bad_channels_action.setEnabled(True)
+        if hasattr(main_window, '_auto_bad_channels') and self._analyzer.channel_quality:
+            main_window._auto_bad_channels = [
+                ch for ch, q in self._analyzer.channel_quality.items() if q == 'poor'
+            ]
 
         # Build status message with artifact rejection and channel quality info
         status_parts = ["Analysis complete"]
