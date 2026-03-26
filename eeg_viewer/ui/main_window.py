@@ -174,14 +174,18 @@ class MainWindow(QMainWindow):
         return 0
 
     def _open_bad_channels(self):
-        """Open the bad channel management dialog."""
+        """Open the bad channel management dialog. Re-runs analysis if channels changed."""
         from .bad_channel_dialog import BadChannelDialog
         ch_names = self._loader.eeg_channel_names
         dialog = BadChannelDialog(
             ch_names, self._bad_channels, self._auto_bad_channels, parent=self
         )
         if dialog.exec_() == QDialog.Accepted:
-            self._bad_channels = dialog.get_bad_channels()
+            new_bad = dialog.get_bad_channels()
+            if new_bad != self._bad_channels:
+                self._bad_channels = new_bad
+                # Trigger re-analysis with updated bad channels
+                self._qeeg_tab._on_reanalyze()
 
     def _show_about(self):
         QMessageBox.about(
