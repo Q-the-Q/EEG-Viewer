@@ -197,9 +197,12 @@ class BandViewTab(QWidget):
         while self._window_combo.count() > len(WINDOW_SIZE_OPTIONS):
             self._window_combo.removeItem(self._window_combo.count() - 1)
         half_dur = round(loader.duration / 2)
-        if half_dur > WINDOW_SIZE_OPTIONS[-1]:
+        max_standard = WINDOW_SIZE_OPTIONS[-1]
+        if half_dur > max_standard:
             self._window_combo.addItem("Half", float(half_dur))
-        self._window_combo.addItem("All", float(round(loader.duration)))
+        all_dur = float(round(loader.duration))
+        if all_dur > max_standard:
+            self._window_combo.addItem("All", all_dur)
         self._window_combo.blockSignals(False)
 
         # Get all EEG data

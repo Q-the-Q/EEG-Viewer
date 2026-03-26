@@ -222,16 +222,7 @@ class MainWindow(QMainWindow):
             with open(file_path, 'r') as f:
                 data = json.load(f)
             from ..data.annotation_store import AnnotationLabel, EEGAnnotation
-            count = 0
-            for ann_data in data.get("annotations", []):
-                ann = EEGAnnotation(
-                    startTime=ann_data["startTime"],
-                    endTime=ann_data["endTime"],
-                    labelID=ann_data["labelID"],
-                )
-                self.annotation_store.annotations.append(ann)
-                count += 1
-            # Merge any new labels
+            # Merge labels first so annotations have valid labelIDs
             existing_ids = {l.id for l in self.annotation_store.labels}
             for lbl_data in data.get("labels", []):
                 if lbl_data["id"] not in existing_ids:
@@ -239,6 +230,20 @@ class MainWindow(QMainWindow):
                         id=lbl_data["id"], name=lbl_data["name"],
                         color=lbl_data["color"], analysisMode=lbl_data["analysisMode"],
                     ))
+                    existing_ids.add(lbl_data["id"])
+            # Import annotations, skipping any with unknown labelIDs
+            valid_label_ids = {l.id for l in self.annotation_store.labels}
+            count = 0
+            for ann_data in data.get("annotations", []):
+                if ann_data["labelID"] not in valid_label_ids:
+                    continue
+                ann = EEGAnnotation(
+                    startTime=ann_data["startTime"],
+                    endTime=ann_data["endTime"],
+                    labelID=ann_data["labelID"],
+                )
+                self.annotation_store.annotations.append(ann)
+                count += 1
             self.annotation_store.save()
             self._waveform_tab._rebuild_label_bar()
             self._waveform_tab._draw_annotations()

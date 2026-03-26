@@ -6,13 +6,13 @@ from scipy.integrate import simpson
 
 from ..utils.constants import (
     PSD_NPERSEG, PSD_NOVERLAP, PSD_WINDOW, FREQ_BANDS, TOTAL_POWER_RANGE,
-    NOTCH_BANDWIDTH,
+    NOTCH_BANDWIDTH, ARTIFACT_THRESHOLD_UV, ARTIFACT_EPOCH_SEC,
+    ARTIFACT_MIN_CLEAN_EPOCHS, ARTIFACT_RELAXED_THRESHOLDS,
 )
 
-# Artifact rejection defaults
-EPOCH_DURATION_SEC = 2.0       # Epoch length for artifact rejection
-ARTIFACT_THRESHOLD_UV = 100.0  # Peak-to-peak threshold in microvolts
-MIN_CLEAN_EPOCHS = 30          # Minimum clean epochs required (fallback: relax threshold)
+# Backward-compat aliases (used throughout this file)
+EPOCH_DURATION_SEC = ARTIFACT_EPOCH_SEC
+MIN_CLEAN_EPOCHS = ARTIFACT_MIN_CLEAN_EPOCHS
 
 # Impedance detection parameters
 IMPEDANCE_DETECTION_ENABLED = True
@@ -236,7 +236,7 @@ class SignalProcessor:
         # If too few clean epochs, progressively relax the threshold
         if len(clean_epochs) < MIN_CLEAN_EPOCHS:
             # Try relaxed thresholds
-            for relaxed_thresh in [150, 200, 300, 500]:
+            for relaxed_thresh in ARTIFACT_RELAXED_THRESHOLDS:
                 clean_epochs = []
                 for e in range(n_epochs):
                     start = e * epoch_samples
@@ -287,7 +287,7 @@ class SignalProcessor:
             max_ptp[e] = np.max(ptp_uv)
 
         # Try thresholds with progressive relaxation
-        thresholds = [threshold] + [t for t in [150, 200, 300, 500] if t > threshold]
+        thresholds = [threshold] + [t for t in ARTIFACT_RELAXED_THRESHOLDS if t > threshold]
         for try_thresh in thresholds:
             mask = max_ptp <= try_thresh
             if np.sum(mask) >= MIN_CLEAN_EPOCHS:

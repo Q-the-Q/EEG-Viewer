@@ -156,7 +156,9 @@ class WaveformControls(QWidget):
         max_standard = WINDOW_SIZE_OPTIONS[-1]
         if half_dur > max_standard:
             self._window_combo.addItem("Half", float(half_dur))
-        self._window_combo.addItem("All", float(round(duration)))
+        all_dur = float(round(duration))
+        if all_dur > max_standard:
+            self._window_combo.addItem("All", all_dur)
         self._window_combo.blockSignals(False)
 
     def update_time_display(self, current_sec):

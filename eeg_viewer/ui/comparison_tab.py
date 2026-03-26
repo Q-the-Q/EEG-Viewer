@@ -50,6 +50,7 @@ class ComparisonTab(QWidget):
         super().__init__(parent)
         self._slots = [None] * MAX_COMPARISONS  # (loader, analyzer, filename)
         self._workers = [None] * MAX_COMPARISONS
+        self._old_workers = []  # keep refs to prevent GC of running threads
         self._setup_ui()
 
     def _setup_ui(self):
@@ -116,14 +117,17 @@ class ComparisonTab(QWidget):
         main_window = self.window()
         notch_freq = main_window.get_notch_freq() if hasattr(main_window, 'get_notch_freq') else 0
 
-        # Stop previous worker for this slot if still running
+        # Disconnect previous worker; keep reference alive to prevent GC crash
         old_worker = self._workers[idx]
         if old_worker is not None:
             old_worker.finished.disconnect()
             old_worker.error.disconnect()
             if old_worker.isRunning():
-                old_worker.quit()
-                old_worker.wait(1000)
+                self._old_workers.append(old_worker)
+                old_worker.finished.connect(
+                    lambda _i=0, _a=None, w=old_worker:
+                        self._old_workers.remove(w) if w in self._old_workers else None
+                )
 
         self._progress.show()
         worker = _SlotWorker(idx, loader, notch_freq)

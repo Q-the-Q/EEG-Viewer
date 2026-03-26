@@ -46,6 +46,7 @@ class HeartTab(QWidget):
         self._loader = None
         self._results = None
         self._worker = None
+        self._old_workers = []  # keep refs to prevent GC of running threads
         self._setup_ui()
 
     def _setup_ui(self):
@@ -154,13 +155,15 @@ class HeartTab(QWidget):
         self._progress.show()
         self._status_label.setText("Analyzing...")
 
-        # Stop previous worker if still running
+        # Disconnect previous worker; keep reference alive to prevent GC crash
         if self._worker is not None:
             self._worker.finished.disconnect()
             self._worker.error.disconnect()
             if self._worker.isRunning():
-                self._worker.quit()
-                self._worker.wait(1000)
+                old = self._worker
+                self._old_workers.append(old)
+                old.finished.connect(lambda w=old: self._old_workers.remove(w)
+                                     if w in self._old_workers else None)
 
         self._worker = _AnalysisWorker(ecg, sfreq, eeg_data, eeg_ch_names, exclusions)
         self._worker.finished.connect(self._on_results)
