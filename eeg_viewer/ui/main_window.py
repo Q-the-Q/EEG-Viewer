@@ -12,7 +12,10 @@ from .qeeg_tab import QEEGTab
 from .connectivity_tab import ConnectivityTab
 from .advanced_analysis_tab import AdvancedAnalysisTab
 from .band_view_tab import BandViewTab
+from .heart_tab import HeartTab
+from .comparison_tab import ComparisonTab
 from ..data.edf_loader import EDFLoader
+from ..data.annotation_store import AnnotationStore
 from ..utils.constants import APP_NAME
 
 
@@ -24,6 +27,7 @@ class MainWindow(QMainWindow):
         self._loader = EDFLoader()
         self._bad_channels = []
         self._auto_bad_channels = []
+        self.annotation_store = AnnotationStore()
         self._init_ui()
         self._init_toolbar()
         self._init_menu()
@@ -42,6 +46,10 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._qeeg_tab, "qEEG Analysis")
         self._tabs.addTab(self._connectivity_tab, "Brain Connectivity")
         self._tabs.addTab(self._advanced_tab, "Advanced Analysis")
+        self._heart_tab = HeartTab()
+        self._tabs.addTab(self._heart_tab, "Heart")
+        self._comparison_tab = ComparisonTab()
+        self._tabs.addTab(self._comparison_tab, "Compare")
 
         # Connect qEEG analysis complete signal to other tabs
         self._qeeg_tab.analysis_complete.connect(self._on_qeeg_analysis_complete)
@@ -159,10 +167,15 @@ class MainWindow(QMainWindow):
             f"{dur_m:02d}:{dur_s:02d} duration"
         )
 
+        # Load annotations for this file
+        self.annotation_store.load(file_path)
+
         # Pass data to tabs
         self._waveform_tab.set_data(self._loader)
+        self._waveform_tab.set_annotation_store(self.annotation_store)
         self._band_view_tab.set_data(self._loader)
         self._qeeg_tab.set_data(self._loader)
+        self._heart_tab.set_data(self._loader)
 
     def get_notch_freq(self):
         """Return selected notch frequency in Hz (0 = off)."""

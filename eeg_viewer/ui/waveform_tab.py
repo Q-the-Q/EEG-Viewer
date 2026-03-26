@@ -2,7 +2,10 @@
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QPushButton,
+    QButtonGroup, QMenu, QDialog,
+)
 from PyQt5.QtCore import Qt
 
 from .channel_selector import ChannelSelector
@@ -33,12 +36,24 @@ class WaveformTab(QWidget):
         self._mode = "static"
         self._channel_spacing = CHANNEL_SPACING_UV
 
+        self.annotation_store = None
+        self._annotation_regions = []
+        self._selected_label_idx = 0
+        self._drag_start = None
+        self._drag_region = None
+
         self._init_ui()
         self._init_playback()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        # Label bar for annotations (populated when annotation store is set)
+        self._label_bar_layout = QHBoxLayout()
+        self._label_buttons = QButtonGroup()
+        self._label_buttons.setExclusive(True)
+        layout.addLayout(self._label_bar_layout)
 
         # Top area: channel selector + plot
         splitter = QSplitter(Qt.Horizontal)
@@ -58,6 +73,9 @@ class WaveformTab(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, stretch=1)
+
+        # Set up annotation mouse interaction
+        self._setup_annotation_interaction()
 
         # Bottom: controls
         self._controls = WaveformControls()
@@ -257,3 +275,193 @@ class WaveformTab(QWidget):
 
     def _on_playback_finished(self):
         self._controls.set_playing(False)
+
+    # --- Annotation support ---
+
+    def set_annotation_store(self, store):
+        """Set the annotation store and update UI."""
+        self.annotation_store = store
+        self._rebuild_label_bar()
+        self._draw_annotations()
+
+    def _rebuild_label_bar(self):
+        """Rebuild label buttons from annotation store."""
+        # Clear existing
+        while self._label_bar_layout.count():
+            item = self._label_bar_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self.annotation_store:
+            return
+
+        for i, label in enumerate(self.annotation_store.labels):
+            c = label.color
+            btn = QPushButton(label.name)
+            r, g, b = int(c['red'] * 255), int(c['green'] * 255), int(c['blue'] * 255)
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: rgba({r},{g},{b},80); "
+                f"border: 2px solid rgba({r},{g},{b},200); padding: 4px 8px; }}"
+                f"QPushButton:checked {{ border: 3px solid rgba({r},{g},{b},255); font-weight: bold; }}"
+            )
+            btn.setCheckable(True)
+            if i == self._selected_label_idx:
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, idx=i: self._on_label_selected(idx))
+            self._label_bar_layout.addWidget(btn)
+
+        self._label_bar_layout.addStretch()
+
+        # Add "Edit Labels" button
+        edit_btn = QPushButton("Edit Labels...")
+        edit_btn.clicked.connect(self._edit_labels)
+        self._label_bar_layout.addWidget(edit_btn)
+
+    def _on_label_selected(self, idx):
+        self._selected_label_idx = idx
+
+    def _edit_labels(self):
+        """Open label editor dialog."""
+        from .annotation_label_editor import AnnotationLabelEditor
+        if not self.annotation_store:
+            return
+        dialog = AnnotationLabelEditor(self.annotation_store, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self._rebuild_label_bar()
+            self._draw_annotations()
+
+    def _draw_annotations(self):
+        """Draw annotation regions on the plot."""
+        # Remove existing regions
+        for region in self._annotation_regions:
+            self._plot_widget.removeItem(region)
+        self._annotation_regions.clear()
+
+        if not self.annotation_store:
+            return
+
+        for ann in self.annotation_store.annotations:
+            label = self.annotation_store.label_for(ann)
+            if not label:
+                continue
+            c = label.color
+            r, g, b = int(c['red'] * 255), int(c['green'] * 255), int(c['blue'] * 255)
+
+            region = pg.LinearRegionItem(
+                values=[ann.startTime, ann.endTime],
+                movable=False,
+                brush=pg.mkBrush(r, g, b, 40),
+                pen=pg.mkPen(r, g, b, 150),
+            )
+            region.ann_id = ann.id  # tag for identification
+            self._plot_widget.addItem(region)
+            self._annotation_regions.append(region)
+
+    def _setup_annotation_interaction(self):
+        """Set up mouse handlers for Shift+drag annotation creation."""
+        vb = self._plot_widget.getPlotItem().getViewBox()
+        self._orig_mouse_press = vb.mousePressEvent
+        self._orig_mouse_move = vb.mouseMoveEvent
+        self._orig_mouse_release = vb.mouseReleaseEvent
+
+        vb.mousePressEvent = self._on_mouse_press
+        vb.mouseMoveEvent = self._on_mouse_move
+        vb.mouseReleaseEvent = self._on_mouse_release
+
+    def _on_mouse_press(self, event):
+        if event.button() == Qt.RightButton and self.annotation_store:
+            # Right-click: context menu on existing annotation
+            pos = self._plot_widget.getPlotItem().getViewBox().mapSceneToView(event.scenePos())
+            self._show_annotation_menu(pos.x(), event.screenPos())
+            return
+
+        if event.button() == Qt.LeftButton and self.annotation_store:
+            # Check for Shift+Click for annotation creation
+            if event.modifiers() & Qt.ShiftModifier:
+                pos = self._plot_widget.getPlotItem().getViewBox().mapSceneToView(event.scenePos())
+                self._drag_start = pos.x()
+                # Create preview region
+                self._drag_region = pg.LinearRegionItem(
+                    values=[self._drag_start, self._drag_start],
+                    movable=False,
+                    brush=pg.mkBrush(100, 100, 255, 40),
+                )
+                self._plot_widget.addItem(self._drag_region)
+                return
+
+        self._orig_mouse_press(event)
+
+    def _on_mouse_move(self, event):
+        if self._drag_start is not None and self._drag_region is not None:
+            pos = self._plot_widget.getPlotItem().getViewBox().mapSceneToView(event.scenePos())
+            self._drag_region.setRegion([self._drag_start, pos.x()])
+            return
+        self._orig_mouse_move(event)
+
+    def _on_mouse_release(self, event):
+        if event.button() == Qt.LeftButton and self._drag_start is not None:
+            pos = self._plot_widget.getPlotItem().getViewBox().mapSceneToView(event.scenePos())
+            end_time = pos.x()
+
+            # Remove preview
+            if self._drag_region:
+                self._plot_widget.removeItem(self._drag_region)
+                self._drag_region = None
+
+            # Create annotation if drag was meaningful (>0.1s)
+            if abs(end_time - self._drag_start) > 0.1 and self.annotation_store:
+                if self._selected_label_idx < len(self.annotation_store.labels):
+                    label = self.annotation_store.labels[self._selected_label_idx]
+                    self.annotation_store.add_annotation(self._drag_start, end_time, label.id)
+                    self._draw_annotations()
+
+            self._drag_start = None
+            return
+
+        self._orig_mouse_release(event)
+
+    def _show_annotation_menu(self, time_x, screen_pos):
+        """Show context menu for annotation at given time."""
+        if not self.annotation_store:
+            return
+
+        # Find annotation at this time
+        hit = None
+        for ann in self.annotation_store.annotations:
+            if ann.startTime <= time_x <= ann.endTime:
+                hit = ann
+                break
+
+        if not hit:
+            return
+
+        menu = QMenu(self)
+
+        # Label reassignment submenu
+        label_menu = menu.addMenu("Change Label")
+        for lbl in self.annotation_store.labels:
+            action = label_menu.addAction(lbl.name)
+            action.setCheckable(True)
+            action.setChecked(lbl.id == hit.labelID)
+            action.triggered.connect(
+                lambda checked, lid=lbl.id, aid=hit.id:
+                    self._reassign_label(aid, lid)
+            )
+
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete Annotation")
+        delete_action.triggered.connect(lambda: self._delete_annotation(hit.id))
+
+        menu.exec_(screen_pos.toPoint())
+
+    def _reassign_label(self, ann_id, label_id):
+        for ann in self.annotation_store.annotations:
+            if ann.id == ann_id:
+                ann.labelID = label_id
+                break
+        self.annotation_store.save()
+        self._draw_annotations()
+
+    def _delete_annotation(self, ann_id):
+        self.annotation_store.remove_annotation(ann_id)
+        self._draw_annotations()
