@@ -54,7 +54,7 @@ PSD_WINDOW = "hann"
 TOTAL_POWER_RANGE = (1.0, 25.0)
 
 # Notch filter
-NOTCH_FREQ_OPTIONS = [0, 50, 60]  # 0 = off
+NOTCH_FREQ_OPTIONS = [0, 50, 55, 60, 65]  # 0 = off
 NOTCH_BANDWIDTH = 2.0  # Hz
 NOTCH_DEFAULT_FREQ = 0  # Off by default, auto-detect from EDF metadata
 
@@ -87,6 +87,18 @@ EEG_ENVELOPE_STEP_SEC = 0.25
 
 # Artifact rejection (also used by signal_processor.py -- keep in sync)
 ARTIFACT_THRESHOLD_UV = 100.0  # uV peak-to-peak
+ARTIFACT_EPOCH_SEC = 2.0  # seconds per epoch
+ARTIFACT_MIN_CLEAN_EPOCHS = 30  # minimum clean epochs before relaxation
+ARTIFACT_RELAXED_THRESHOLDS = [150.0, 200.0, 300.0, 500.0]  # progressive relaxation µV
+
+# HRV normal ranges for gauge display: (min, normalLow, normalHigh, max, lowLabel, normalLabel, highLabel)
+HRV_RANGES = {
+    "meanHR": (30, 60, 100, 180, "Bradycardia", "Normal", "Tachycardia"),
+    "sdnn": (0, 50, 150, 300, "Low Variability", "Normal", "High Variability"),
+    "rmssd": (0, 20, 75, 150, "Low Vagal", "Normal", "High Vagal"),
+    "pnn50": (0, 5, 40, 80, "Low", "Normal", "High"),
+    "lfhf": (0, 0.5, 5.0, 30, "Parasympathetic", "Balanced", "Sympathetic"),
+}
 
 # Application styling
 APP_NAME = "EEG Viewer"

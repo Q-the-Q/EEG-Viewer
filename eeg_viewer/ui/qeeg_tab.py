@@ -261,6 +261,10 @@ class QEEGTab(QWidget):
             main_window._auto_bad_channels = [
                 ch for ch, q in self._analyzer.channel_quality.items() if q == 'poor'
             ]
+            # Update channel selector badges
+            all_bad = list(set(main_window._auto_bad_channels + getattr(main_window, '_bad_channels', [])))
+            if hasattr(main_window, '_waveform_tab'):
+                main_window._waveform_tab._channel_selector.set_bad_channels(all_bad)
 
         # Build status message with artifact rejection and channel quality info
         status_parts = ["Analysis complete"]

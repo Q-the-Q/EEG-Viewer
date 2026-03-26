@@ -143,6 +143,23 @@ class WaveformControls(QWidget):
         self._duration = duration
         self._time_slider.setRange(0, int(duration * 1000))
         self._update_time_label(0.0)
+        self._update_window_options(duration)
+
+    def _update_window_options(self, duration):
+        """Add Half/All options to window size combo based on recording duration."""
+        self._window_combo.blockSignals(True)
+        # Remove any previously added Half/All items beyond the standard options
+        while self._window_combo.count() > len(WINDOW_SIZE_OPTIONS):
+            self._window_combo.removeItem(self._window_combo.count() - 1)
+        # Add Half if longer than max standard option
+        half_dur = round(duration / 2)
+        max_standard = WINDOW_SIZE_OPTIONS[-1]
+        if half_dur > max_standard:
+            self._window_combo.addItem("Half", float(half_dur))
+        all_dur = float(round(duration))
+        if all_dur > max_standard:
+            self._window_combo.addItem("All", all_dur)
+        self._window_combo.blockSignals(False)
 
     def update_time_display(self, current_sec):
         """Update the time label and slider from playback."""

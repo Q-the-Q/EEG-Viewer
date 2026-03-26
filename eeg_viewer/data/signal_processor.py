@@ -6,13 +6,13 @@ from scipy.integrate import simpson
 
 from ..utils.constants import (
     PSD_NPERSEG, PSD_NOVERLAP, PSD_WINDOW, FREQ_BANDS, TOTAL_POWER_RANGE,
-    NOTCH_BANDWIDTH,
+    NOTCH_BANDWIDTH, ARTIFACT_THRESHOLD_UV, ARTIFACT_EPOCH_SEC,
+    ARTIFACT_MIN_CLEAN_EPOCHS, ARTIFACT_RELAXED_THRESHOLDS,
 )
 
-# Artifact rejection defaults
-EPOCH_DURATION_SEC = 2.0       # Epoch length for artifact rejection
-ARTIFACT_THRESHOLD_UV = 100.0  # Peak-to-peak threshold in microvolts
-MIN_CLEAN_EPOCHS = 30          # Minimum clean epochs required (fallback: relax threshold)
+# Backward-compat aliases (used throughout this file)
+EPOCH_DURATION_SEC = ARTIFACT_EPOCH_SEC
+MIN_CLEAN_EPOCHS = ARTIFACT_MIN_CLEAN_EPOCHS
 
 # Impedance detection parameters
 IMPEDANCE_DETECTION_ENABLED = True
@@ -236,7 +236,7 @@ class SignalProcessor:
         # If too few clean epochs, progressively relax the threshold
         if len(clean_epochs) < MIN_CLEAN_EPOCHS:
             # Try relaxed thresholds
-            for relaxed_thresh in [150, 200, 300, 500]:
+            for relaxed_thresh in ARTIFACT_RELAXED_THRESHOLDS:
                 clean_epochs = []
                 for e in range(n_epochs):
                     start = e * epoch_samples
@@ -260,6 +260,41 @@ class SignalProcessor:
         # Concatenate clean epochs back into continuous data
         clean_data = np.concatenate(clean_epochs, axis=1)
         return clean_data
+
+    def get_artifact_mask(self, data, threshold_uv=None, epoch_sec=None):
+        """Compute per-epoch artifact mask with progressive threshold relaxation.
+
+        Returns:
+            Tuple of (mask, effective_threshold_uv) where mask[i] = True
+            means epoch i is clean. Uses the same progressive relaxation
+            as reject_artifacts().
+        """
+        threshold = threshold_uv or ARTIFACT_THRESHOLD_UV
+        epoch_dur = epoch_sec or EPOCH_DURATION_SEC
+        epoch_samples = int(epoch_dur * self.sfreq)
+        n_epochs = data.shape[1] // epoch_samples
+
+        if n_epochs == 0:
+            return np.array([], dtype=bool), threshold
+
+        # Compute peak-to-peak matrix: (n_epochs,) max ptp across channels
+        max_ptp = np.zeros(n_epochs)
+        for e in range(n_epochs):
+            start = e * epoch_samples
+            end = start + epoch_samples
+            epoch = data[:, start:end]
+            ptp_uv = (np.max(epoch, axis=1) - np.min(epoch, axis=1)) * 1e6
+            max_ptp[e] = np.max(ptp_uv)
+
+        # Try thresholds with progressive relaxation
+        thresholds = [threshold] + [t for t in ARTIFACT_RELAXED_THRESHOLDS if t > threshold]
+        for try_thresh in thresholds:
+            mask = max_ptp <= try_thresh
+            if np.sum(mask) >= MIN_CLEAN_EPOCHS:
+                return mask, try_thresh
+
+        # Fallback: mark all as clean
+        return np.ones(n_epochs, dtype=bool), float('inf')
 
     def compute_psd_welch(self, data, n_fft=None, n_overlap=None):
         """Compute PSD using Welch's method.

@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(notch_label)
 
         self._notch_combo = QComboBox()
-        self._notch_combo.addItems(["Off", "50 Hz", "60 Hz"])
+        self._notch_combo.addItems(["Off", "50 Hz", "55 Hz", "60 Hz", "65 Hz"])
         self._notch_combo.setCurrentIndex(0)  # Off by default
         self._notch_combo.setToolTip("Power line notch filter frequency")
         toolbar.addWidget(self._notch_combo)
@@ -111,6 +111,12 @@ class MainWindow(QMainWindow):
         bad_channels_action.setEnabled(False)
         self._bad_channels_action = bad_channels_action
         file_menu.addAction(bad_channels_action)
+
+        import_ann_action = QAction("Import Annotations...", self)
+        import_ann_action.triggered.connect(self._import_annotations)
+        import_ann_action.setEnabled(False)
+        self._import_ann_action = import_ann_action
+        file_menu.addAction(import_ann_action)
 
         file_menu.addSeparator()
 
@@ -146,12 +152,13 @@ class MainWindow(QMainWindow):
 
         # Auto-detect power line frequency from EDF header
         line_freq = self._loader.raw.info.get('line_freq')
-        if line_freq in (50, 60):
-            idx = {50: 1, 60: 2}[int(line_freq)]
-            self._notch_combo.setCurrentIndex(idx)
+        notch_map = {50: 1, 55: 2, 60: 3, 65: 4}
+        if line_freq and int(line_freq) in notch_map:
+            self._notch_combo.setCurrentIndex(notch_map[int(line_freq)])
 
-        # Enable bad channels menu and reset state
+        # Enable menu items and reset state
         self._bad_channels_action.setEnabled(True)
+        self._import_ann_action.setEnabled(True)
         self._bad_channels = []
         self._auto_bad_channels = []
 
@@ -180,10 +187,9 @@ class MainWindow(QMainWindow):
     def get_notch_freq(self):
         """Return selected notch frequency in Hz (0 = off)."""
         text = self._notch_combo.currentText()
-        if text == "50 Hz":
-            return 50
-        elif text == "60 Hz":
-            return 60
+        for freq in (50, 55, 60, 65):
+            if text == f"{freq} Hz":
+                return freq
         return 0
 
     def _open_bad_channels(self):
@@ -197,8 +203,53 @@ class MainWindow(QMainWindow):
             new_bad = dialog.get_bad_channels()
             if new_bad != self._bad_channels:
                 self._bad_channels = new_bad
+                # Update channel selector badges
+                all_bad = list(set(self._bad_channels + self._auto_bad_channels))
+                self._waveform_tab._channel_selector.set_bad_channels(all_bad)
                 # Trigger re-analysis with updated bad channels
                 self._qeeg_tab._on_reanalyze()
+
+    def _import_annotations(self):
+        """Import annotations from a .annotations.json file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Annotations", "",
+            "Annotation Files (*.annotations.json *.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+        try:
+            import json
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            from ..data.annotation_store import AnnotationLabel, EEGAnnotation
+            # Merge labels first so annotations have valid labelIDs
+            existing_ids = {l.id for l in self.annotation_store.labels}
+            for lbl_data in data.get("labels", []):
+                if lbl_data["id"] not in existing_ids:
+                    self.annotation_store.labels.append(AnnotationLabel(
+                        id=lbl_data["id"], name=lbl_data["name"],
+                        color=lbl_data["color"], analysisMode=lbl_data["analysisMode"],
+                    ))
+                    existing_ids.add(lbl_data["id"])
+            # Import annotations, skipping any with unknown labelIDs
+            valid_label_ids = {l.id for l in self.annotation_store.labels}
+            count = 0
+            for ann_data in data.get("annotations", []):
+                if ann_data["labelID"] not in valid_label_ids:
+                    continue
+                ann = EEGAnnotation(
+                    startTime=ann_data["startTime"],
+                    endTime=ann_data["endTime"],
+                    labelID=ann_data["labelID"],
+                )
+                self.annotation_store.annotations.append(ann)
+                count += 1
+            self.annotation_store.save()
+            self._waveform_tab._rebuild_label_bar()
+            self._waveform_tab._draw_annotations()
+            self._statusbar.showMessage(f"Imported {count} annotations", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Import Error", f"Failed to import: {e}")
 
     def _show_about(self):
         QMessageBox.about(
