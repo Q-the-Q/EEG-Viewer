@@ -58,6 +58,36 @@ NOTCH_FREQ_OPTIONS = [0, 50, 60]  # 0 = off
 NOTCH_BANDWIDTH = 2.0  # Hz
 NOTCH_DEFAULT_FREQ = 0  # Off by default, auto-detect from EDF metadata
 
+# HRV Analysis
+HRV_INTERPOLATION_RATE = 4.0  # Hz, uniform RR resampling
+HRV_PSD_NPERSEG = 256  # Welch segment length at 4 Hz
+HRV_PSD_NOVERLAP = 128  # 50% overlap
+HRV_LF_BAND = (0.04, 0.15)  # Hz
+HRV_HF_BAND = (0.15, 0.4)  # Hz
+HRV_TOTAL_BAND = (0.003, 0.4)  # Hz
+
+# R-peak detection
+R_PEAK_REFRACTORY_MS = 200.0  # min interval between peaks
+R_PEAK_MIN_RR_MS = 300.0  # min valid RR (200 BPM)
+R_PEAK_MAX_RR_MS = 2000.0  # max valid RR (30 BPM)
+ECG_BANDPASS_LOW = 5.0  # Hz
+ECG_BANDPASS_HIGH = 15.0  # Hz
+
+# Heart-brain coherence
+HB_COHERENCE_BANDS = {
+    "Delta": (1.0, 4.0),
+    "Theta": (4.0, 8.0),
+    "Alpha": (8.0, 13.0),
+}
+HB_COHERENCE_LF_BAND = (0.04, 0.15)  # Hz, for coherence averaging
+HB_COHERENCE_MIN_NPERSEG = 128
+HB_COHERENCE_MAX_NPERSEG = 256
+EEG_ENVELOPE_WINDOW_SEC = 2.0
+EEG_ENVELOPE_STEP_SEC = 0.25
+
+# Artifact rejection (also used by signal_processor.py -- keep in sync)
+ARTIFACT_THRESHOLD_UV = 100.0  # uV peak-to-peak
+
 # Application styling
 APP_NAME = "EEG Viewer"
 BACKGROUND_COLOR = "#FFFFFF"
