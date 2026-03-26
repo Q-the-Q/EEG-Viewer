@@ -57,13 +57,16 @@ class AnnotationLabelEditor(QDialog):
             self._set_row(i, label)
 
     def _set_row(self, row, label):
+        # Use label.id in lambdas (not row index) to avoid stale references after deletion
+        label_id = label.id
+
         # Color button
         c = label.color
         r, g, b = int(c['red'] * 255), int(c['green'] * 255), int(c['blue'] * 255)
         color_btn = QPushButton()
         color_btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid gray;")
         color_btn.setFixedWidth(50)
-        color_btn.clicked.connect(lambda _, idx=row: self._pick_color(idx))
+        color_btn.clicked.connect(lambda _, lid=label_id: self._pick_color(lid))
         self.table.setCellWidget(row, 0, color_btn)
 
         # Name
@@ -79,10 +82,20 @@ class AnnotationLabelEditor(QDialog):
         # Delete button
         del_btn = QPushButton("x")
         del_btn.setFixedWidth(40)
-        del_btn.clicked.connect(lambda _, idx=row: self._delete_label(idx))
+        del_btn.clicked.connect(lambda _, lid=label_id: self._delete_label(lid))
         self.table.setCellWidget(row, 3, del_btn)
 
-    def _pick_color(self, row):
+    def _find_label_row(self, label_id):
+        """Find the current row index for a label by its ID."""
+        for i, label in enumerate(self.store.labels):
+            if label.id == label_id:
+                return i
+        return None
+
+    def _pick_color(self, label_id):
+        row = self._find_label_row(label_id)
+        if row is None:
+            return
         label = self.store.labels[row]
         c = label.color
         initial = QColor(int(c['red'] * 255), int(c['green'] * 255), int(c['blue'] * 255))
@@ -107,8 +120,9 @@ class AnnotationLabelEditor(QDialog):
         self._set_row(row, label)
         self.new_name.clear()
 
-    def _delete_label(self, row):
-        if row >= len(self.store.labels):
+    def _delete_label(self, label_id):
+        row = self._find_label_row(label_id)
+        if row is None:
             return
         label = self.store.labels[row]
         reply = QMessageBox.question(

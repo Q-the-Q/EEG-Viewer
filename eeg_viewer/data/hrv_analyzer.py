@@ -233,10 +233,12 @@ def _interpolate_rr(peaks, rr_ms, sfreq, target_rate=HRV_INTERPOLATION_RATE):
     """Interpolate RR intervals to uniform sample rate."""
     if len(rr_ms) < 2:
         return np.array([]), target_rate
-    # Time stamps at midpoints between R-peaks (not endpoints)
-    rr_times = (peaks[:-1] + peaks[1:]) / 2.0 / sfreq  # seconds
-    # Only use the valid RR intervals (matching the filtered rr_ms length)
-    rr_times = rr_times[:len(rr_ms)]
+    # Recompute all RR intervals and midpoints, then apply the same
+    # physiological filter so timestamps align with the filtered rr_ms.
+    all_rr = np.diff(peaks) / sfreq * 1000.0
+    all_times = (peaks[:-1] + peaks[1:]) / 2.0 / sfreq
+    mask = (all_rr >= R_PEAK_MIN_RR_MS) & (all_rr <= R_PEAK_MAX_RR_MS)
+    rr_times = all_times[mask]
     # Uniform time grid
     t_start = rr_times[0]
     t_end = rr_times[-1]
@@ -463,6 +465,12 @@ def run_full_analysis(ecg, sfreq, eeg_data=None, eeg_channel_names=None,
         "poincare": compute_poincare(rr_ms),
         "frequency_domain": compute_frequency_domain(peaks, rr_ms, sfreq),
     }
+
+    # When exclusions are applied, also provide original-timeline display data
+    # so the ECG plot shows wall-clock time with peaks in correct positions.
+    if exclusions:
+        results["ecg_display"] = bandpass(ecg, ECG_BANDPASS_LOW, ECG_BANDPASS_HIGH, sfreq)
+        results["peaks_display"] = detect_r_peaks(ecg, sfreq)
 
     if eeg_data is not None and eeg_channel_names is not None:
         results["heart_brain"] = compute_heart_brain_coherence(

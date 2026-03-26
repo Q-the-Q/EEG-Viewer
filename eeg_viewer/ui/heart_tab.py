@@ -154,6 +154,14 @@ class HeartTab(QWidget):
         self._progress.show()
         self._status_label.setText("Analyzing...")
 
+        # Stop previous worker if still running
+        if self._worker is not None:
+            self._worker.finished.disconnect()
+            self._worker.error.disconnect()
+            if self._worker.isRunning():
+                self._worker.quit()
+                self._worker.wait(1000)
+
         self._worker = _AnalysisWorker(ecg, sfreq, eeg_data, eeg_ch_names, exclusions)
         self._worker.finished.connect(self._on_results)
         self._worker.error.connect(self._on_error)
@@ -181,7 +189,9 @@ class HeartTab(QWidget):
     def _draw_ecg(self, results):
         self._ecg_fig.clear()
         ax = self._ecg_fig.add_subplot(111)
-        ecg = results["ecg_filtered"]
+        # Use original-timeline display data when available (exclusions applied)
+        ecg = results.get("ecg_display", results["ecg_filtered"])
+        peaks = results.get("peaks_display", results["peaks"])
         sfreq = self._loader.raw.info['sfreq']
 
         # Show first 10 seconds
@@ -190,7 +200,6 @@ class HeartTab(QWidget):
         ax.plot(t, ecg[:n_show] * 1e6, color='#1a1a2e', linewidth=0.5)
 
         # R-peaks in window
-        peaks = results["peaks"]
         peak_mask = peaks < n_show
         if np.any(peak_mask):
             p = peaks[peak_mask]

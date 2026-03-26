@@ -116,6 +116,15 @@ class ComparisonTab(QWidget):
         main_window = self.window()
         notch_freq = main_window.get_notch_freq() if hasattr(main_window, 'get_notch_freq') else 0
 
+        # Stop previous worker for this slot if still running
+        old_worker = self._workers[idx]
+        if old_worker is not None:
+            old_worker.finished.disconnect()
+            old_worker.error.disconnect()
+            if old_worker.isRunning():
+                old_worker.quit()
+                old_worker.wait(1000)
+
         self._progress.show()
         worker = _SlotWorker(idx, loader, notch_freq)
         worker.finished.connect(self._on_slot_done)

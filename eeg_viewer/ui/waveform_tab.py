@@ -369,7 +369,7 @@ class WaveformTab(QWidget):
         vb.mouseReleaseEvent = self._on_mouse_release
 
     def _on_mouse_press(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.RightButton and self.annotation_store:
             # Right-click: context menu on existing annotation
             pos = self._plot_widget.getPlotItem().getViewBox().mapSceneToView(event.scenePos())
             self._show_annotation_menu(pos.x(), event.screenPos())
