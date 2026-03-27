@@ -335,26 +335,24 @@ class HeartTab(QWidget):
 
             # SD1/SD2 ellipses (1x and 2x standard deviations)
             # SD2 lies along the identity line (45 deg), SD1 perpendicular
-            for scale, alpha in [(1, 0.3), (2, 0.15)]:
-                ellipse = Ellipse(
-                    xy=(center_x, center_y),
-                    width=sd2 * 2 * scale,  # SD2 along identity line
-                    height=sd1 * 2 * scale,  # SD1 perpendicular
-                    angle=45,
-                    edgecolor='red', facecolor='red', alpha=alpha,
-                    linewidth=1.5 if scale == 1 else 1.0,
-                )
-                ax.add_patch(ellipse)
+            if sd1 > 0 and sd2 > 0:
+                for scale, alpha in [(1, 0.3), (2, 0.15)]:
+                    ellipse = Ellipse(
+                        xy=(center_x, center_y),
+                        width=sd2 * 2 * scale,  # SD2 along identity line
+                        height=sd1 * 2 * scale,  # SD1 perpendicular
+                        angle=45,
+                        edgecolor='red', facecolor='red', alpha=alpha,
+                        linewidth=1.5 if scale == 1 else 1.0,
+                    )
+                    ax.add_patch(ellipse)
 
-            # Identity line across full range
-            margin = max(sd2, sd1) * 3
-            lim_lo = center_x - margin
-            lim_hi = center_x + margin
-            ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], 'k--', alpha=0.3)
-
-            # Set axis limits based on data center + ellipse extent
-            ax.set_xlim(lim_lo, lim_hi)
-            ax.set_ylim(lim_lo, lim_hi)
+            # Identity line and axis limits
+            margin = max(sd2, sd1, 50) * 3  # min 50ms margin for degenerate cases
+            ax.plot([center_x - margin, center_x + margin],
+                    [center_x - margin, center_x + margin], 'k--', alpha=0.3)
+            ax.set_xlim(center_x - margin, center_x + margin)
+            ax.set_ylim(center_y - margin, center_y + margin)
             ax.set_aspect('equal')
 
             ax.set_title(f"SD1={sd1:.1f}  SD2={sd2:.1f}")
