@@ -6,6 +6,7 @@ Ported from Swift HRVAnalyzer -- identical algorithms and parameters.
 
 import numpy as np
 from scipy.signal import butter, filtfilt, welch, coherence as scipy_coherence
+from scipy.integrate import trapezoid as _trapezoid
 from ..utils.constants import (
     HRV_INTERPOLATION_RATE, HRV_PSD_NPERSEG, HRV_PSD_NOVERLAP,
     HRV_LF_BAND, HRV_HF_BAND, HRV_TOTAL_BAND,
@@ -390,7 +391,7 @@ def _band_power(freqs, psd, band):
     mask = (freqs >= band[0]) & (freqs <= band[1])
     if not np.any(mask):
         return 0.0
-    return float(np.trapz(psd[mask], freqs[mask]))
+    return float(_trapezoid(psd[mask], freqs[mask]))
 
 
 def _prev_power_of_two(n):
