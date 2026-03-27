@@ -315,17 +315,49 @@ class HeartTab(QWidget):
         ax.text(0, -0.3, label, ha='center', fontsize=7, color=color, fontstyle='italic')
 
     def _draw_poincare(self, results):
+        from matplotlib.patches import Ellipse
         self._poincare_fig.clear()
         ax = self._poincare_fig.add_subplot(111)
         pc = results["poincare"]
 
         if len(pc["rr_n"]) > 0:
-            ax.scatter(pc["rr_n"], pc["rr_n1"], s=5, alpha=0.5, color='steelblue')
+            rr_n = np.array(pc["rr_n"])
+            rr_n1 = np.array(pc["rr_n1"])
+
+            # Scatter plot
+            ax.scatter(rr_n, rr_n1, s=5, alpha=0.5, color='steelblue')
+
             # Identity line
-            lims = [min(np.min(pc["rr_n"]), np.min(pc["rr_n1"])),
-                    max(np.max(pc["rr_n"]), np.max(pc["rr_n1"]))]
-            ax.plot(lims, lims, 'k--', alpha=0.3)
-            ax.set_title(f"SD1={pc['sd1']:.1f}  SD2={pc['sd2']:.1f}")
+            center_x = np.mean(rr_n)
+            center_y = np.mean(rr_n1)
+            sd1 = pc['sd1']
+            sd2 = pc['sd2']
+
+            # SD1/SD2 ellipses (1x and 2x standard deviations)
+            # SD2 lies along the identity line (45 deg), SD1 perpendicular
+            for scale, alpha in [(1, 0.3), (2, 0.15)]:
+                ellipse = Ellipse(
+                    xy=(center_x, center_y),
+                    width=sd2 * 2 * scale,  # SD2 along identity line
+                    height=sd1 * 2 * scale,  # SD1 perpendicular
+                    angle=45,
+                    edgecolor='red', facecolor='red', alpha=alpha,
+                    linewidth=1.5 if scale == 1 else 1.0,
+                )
+                ax.add_patch(ellipse)
+
+            # Identity line across full range
+            margin = max(sd2, sd1) * 3
+            lim_lo = center_x - margin
+            lim_hi = center_x + margin
+            ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], 'k--', alpha=0.3)
+
+            # Set axis limits based on data center + ellipse extent
+            ax.set_xlim(lim_lo, lim_hi)
+            ax.set_ylim(lim_lo, lim_hi)
+            ax.set_aspect('equal')
+
+            ax.set_title(f"SD1={sd1:.1f}  SD2={sd2:.1f}")
         else:
             ax.text(0.5, 0.5, "Insufficient data", ha='center', va='center',
                     transform=ax.transAxes)

@@ -390,7 +390,7 @@ def _band_power(freqs, psd, band):
     mask = (freqs >= band[0]) & (freqs <= band[1])
     if not np.any(mask):
         return 0.0
-    return float(np.trapz(psd[mask], freqs[mask]))
+    return float(np.trapezoid(psd[mask], freqs[mask]))
 
 
 def _prev_power_of_two(n):

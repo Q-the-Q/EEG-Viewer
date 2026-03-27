@@ -16,9 +16,8 @@ MIN_CLEAN_EPOCHS = ARTIFACT_MIN_CLEAN_EPOCHS
 
 # Impedance detection parameters
 IMPEDANCE_DETECTION_ENABLED = True
-IMPEDANCE_NOISE_FLOOR_THRESHOLD = -110.0  # dB - channels above this have high impedance
-IMPEDANCE_SLOPE_THRESHOLD = -1.8          # 1/f slope - steeper = more noise
-IMPEDANCE_RMS_PERCENTILE = 75             # Flag channels in top 25% RMS
+IMPEDANCE_NOISE_FLOOR_THRESHOLD = -105.0  # dB - channels above this have high noise floor
+IMPEDANCE_SLOPE_THRESHOLD = -2.5          # 1/f slope - steeper = more noise-dominated
 
 
 class SignalProcessor:
@@ -35,12 +34,13 @@ class SignalProcessor:
         self.bad_channels = []     # List of channel indices/names flagged as high-impedance
 
     def detect_impedance_issues(self, data, channel_names):
-        """Detect high-impedance channels using spectral and statistical criteria.
+        """Detect high-impedance channels using spectral criteria.
 
-        High-impedance electrodes show:
-        1. Elevated low-frequency noise (0.5-2 Hz)
-        2. Steep 1/f slope (poor signal quality)
-        3. Abnormally high RMS amplitude
+        High-impedance electrodes show BOTH:
+        1. Elevated low-frequency noise floor (0.5-2 Hz)
+        2. Steep 1/f slope (noise-dominated spectrum)
+
+        Both criteria must be met to flag a channel, reducing false positives.
 
         Args:
             data: Array of shape (n_channels, n_samples) in Volts.
@@ -57,10 +57,6 @@ class SignalProcessor:
                 self.channel_quality[ch] = 'good'
             return self.channel_quality
 
-        # Compute metrics for all channels
-        rms_values = np.sqrt(np.mean(data**2, axis=1))
-        rms_threshold = np.percentile(rms_values, IMPEDANCE_RMS_PERCENTILE)
-
         slopes = []
         low_freq_powers = []
 
@@ -74,8 +70,8 @@ class SignalProcessor:
             low_freq_powers.append(low_power_db)
 
             # 1/f slope in log-log space (0.5-30 Hz)
-            log_f = np.log10(f + 1e-10)  # Add small epsilon to avoid log(0)
-            log_psd = np.log10(psd + 1e-20)  # Add small epsilon to avoid log(0)
+            log_f = np.log10(f + 1e-10)
+            log_psd = np.log10(psd + 1e-20)
             mask = (f >= 0.5) & (f <= 30)
             if np.any(mask):
                 slope, _ = np.polyfit(log_f[mask], log_psd[mask], 1)
@@ -86,27 +82,12 @@ class SignalProcessor:
         slopes = np.array(slopes)
         low_freq_powers = np.array(low_freq_powers)
 
-        # Classify each channel
+        # Classify each channel — BOTH criteria must be met (AND)
         for i, ch in enumerate(channel_names):
-            is_bad = False
-            reasons = []
+            high_noise = low_freq_powers[i] > IMPEDANCE_NOISE_FLOOR_THRESHOLD
+            steep_slope = slopes[i] < IMPEDANCE_SLOPE_THRESHOLD
 
-            # Check 1: High low-frequency noise floor
-            if low_freq_powers[i] > IMPEDANCE_NOISE_FLOOR_THRESHOLD:
-                is_bad = True
-                reasons.append(f"high-noise-floor({low_freq_powers[i]:.1f}dB)")
-
-            # Check 2: Steep 1/f slope (poor signal quality)
-            if slopes[i] < IMPEDANCE_SLOPE_THRESHOLD:
-                is_bad = True
-                reasons.append(f"steep-1f-slope({slopes[i]:.2f})")
-
-            # Check 3: Abnormally high RMS
-            if rms_values[i] > rms_threshold:
-                is_bad = True
-                reasons.append(f"high-RMS({rms_values[i]*1e6:.1f}µV)")
-
-            if is_bad:
+            if high_noise and steep_slope:
                 self.channel_quality[ch] = 'poor'
                 self.bad_channels.append(i)
             else:
